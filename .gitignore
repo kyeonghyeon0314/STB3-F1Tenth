@@ -1,0 +1,10 @@
+CLAUDE.md
+GEMINI.md
+.cache/
+.vscode/
+__pycache__/
+f110_gym.egg-info/
+.config/
+sac_cnn_tensorboard/
+tmp/
+.nv/

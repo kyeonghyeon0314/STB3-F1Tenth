@@ -1,4 +1,4 @@
-# MIT License
+# MIT 라이선스
 
 # Copyright (c) 2021 Eoin Gogarty, Charlie Maguire and Manus McAuliffe (Formula Trintiy Autonomous)
 
@@ -21,7 +21,7 @@
 # SOFTWARE.
 
 """
-Stable Baselines 3 evaluating script for F1Tenth Gym with wrapped environment
+래핑된 환경을 사용하는 F1Tenth Gym용 Stable Baselines 3 평가 스크립트
 """
 
 import os
@@ -48,46 +48,55 @@ MAP_CHANGE_INTERVAL = 3000
 def main(args):
 
     #          #
-    # EVALUATE #
+    #   평가   #
     #          #
 
-    # prepare the environment
+    # 환경 준비
     def wrap_env():
-        # starts F110 gym
+        # F110 gym 시작
         env = gym.make("f110_gym:f110-v0",
                        map=MAP_PATH,
                        map_ext=MAP_EXTENSION,
                        num_agents=1)
-        # wrap basic gym with RL functions
+        # RL 함수로 기본 gym 래핑
         env = F110_Wrapped(env)
         env = RandomMap(env, MAP_CHANGE_INTERVAL)
         return env
 
-    # create evaluation environment (same as train environment)
+    # 평가 환경 생성 (훈련 환경과 동일)
     eval_env = wrap_env()
 
-    # set random seed
+    # 무작위 시드 설정
     eval_env.seed(np.random.randint(pow(2, 32) - 1))
 
-    # load or create model
+    # 모델 로드 또는 생성
     model, _ = load_model(args.load,
                           TRAIN_DIRECTORY,
                           eval_env,
                           evaluating=True)
 
-    # simulate a few episodes and render them, ctrl-c to cancel an episode
+    # 몇 개의 에피소드를 시뮬레이션하고 렌더링, 에피소드를 취소하려면 ctrl-c
     episode = 0
     while episode < MIN_EVAL_EPISODES:
         try:
             episode += 1
-            obs = eval_env.reset()
+            reset_result = eval_env.reset()
+            if isinstance(reset_result, tuple) and len(reset_result) == 2:
+                obs, _ = reset_result
+            else:
+                obs = reset_result
             done = False
             while not done:
-                # use trained model to predict some action, using observations
+                # 훈련된 모델을 사용하여 관측값을 기반으로 행동 예측
                 action, _ = model.predict(obs)
-                obs, _, done, _ = eval_env.step(action)
+                step_result = eval_env.step(action)
+                if isinstance(step_result, tuple) and len(step_result) == 5:
+                    obs, _, terminated, truncated, _ = step_result
+                    done = bool(terminated or truncated)
+                else:
+                    obs, _, done, _ = step_result
                 eval_env.render()
-            # this section just asks the user if they want to run more episodes
+            # 이 섹션은 사용자에게 더 많은 에피소드를 실행할지 묻습니다
             if episode == (MIN_EVAL_EPISODES - 1):
                 choice = input("Another episode? (Y/N) ")
                 if choice.replace(" ", "").lower() in ["y", "yes"]:
@@ -100,12 +109,12 @@ def main(args):
 
 def load_model(load_arg, train_directory, envs, tensorboard_path=None, evaluating=False):
     '''
-    Slighly convoluted function that either creates a new model as specified below
-    in the "create new model" section, or loads in the latest trained
-    model (or user specified model) to continue training
+    아래 "새 모델 생성" 섹션에 지정된 대로 새 모델을 생성하거나,
+    가장 최근에 훈련된 모델(또는 사용자가 지정한 모델)을 로드하여
+    훈련을 계속하는 약간 복잡한 함수
     '''
     
-    # create new model
+    # 새 모델 생성
     if (load_arg is None) and (not evaluating):
         print("Creating new model...")
         reset_num_timesteps = True
@@ -113,37 +122,37 @@ def load_model(load_arg, train_directory, envs, tensorboard_path=None, evaluatin
                     envs,
                     verbose=1,
                     tensorboard_log=tensorboard_path)
-    # load model
+    # 모델 로드
     else:
         reset_num_timesteps = False
-        # get trained model list
+        # 훈련된 모델 목록 가져오기
         trained_models = glob.glob(f"{train_directory}/*")
-        # latest model
+        # 최신 모델
         if (load_arg == "latest") or (load_arg is None):
             model_path = max(trained_models, key=os.path.getctime)
         else:
             trained_models_sorted = sorted(trained_models,
                                            key=os.path.getctime,
                                            reverse=True)
-            # match user input to model names
+            # 사용자 입력을 모델 이름과 일치시킴
             model_path = [m for m in trained_models_sorted if load_arg in m]
             model_path = model_path[0]
-        # get plain model name for printing
+        # 출력을 위한 일반 모델 이름 가져오기
         model_name = model_path.replace(".zip", '')
         model_name = model_name.replace(f"{train_directory}/", '')
         print(f"Loading model ({train_directory}) {model_name}")
-        # load model from path
+        # 경로에서 모델 로드
         model = PPO.load(model_path)
-        # set and reset environment
+        # 환경 설정 및 리셋
         model.set_env(envs)
         envs.reset()
-    # return new/loaded model
+    # 새/로드된 모델 반환
     return model, reset_num_timesteps
 
 
-# necessary for Python multi-processing (not needed in evaluating)
+# Python 다중 처리에 필요 (평가에는 필요 없음)
 if __name__ == "__main__":
-    # parse runtime arguments to script
+    # 스크립트에 대한 런타임 인수 구문 분석
     parser = argparse.ArgumentParser()
     parser.add_argument("-l",
                         "--load",
@@ -151,5 +160,5 @@ if __name__ == "__main__":
                         nargs="?",
                         const="latest")
     args = parser.parse_args()
-    # call main training function
+    # 주 훈련 함수 호출
     main(args)

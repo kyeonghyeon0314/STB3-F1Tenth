@@ -1,5 +1,5 @@
 """
-Stable Baselines 3 training script for F1Tenth Gym with SAC and a custom CNN policy.
+SAC와 사용자 정의 CNN 정책을 사용하는 F1Tenth Gym용 Stable Baselines 3 훈련 스크립트.
 """
 
 import os
@@ -20,7 +20,7 @@ from code.wrappers import F110_Wrapped, RandomF1TenthMap
 from code.cnn_policy import LidarFeatureExtractor
 from code.eoin_callbacks import SaveOnBestTrainingRewardCallback
 
-# Script constants
+# 스크립트 상수
 TRAIN_DIRECTORY = "./train_sac_cnn"
 TRAIN_STEPS = 500_000
 NUM_PROCESS = 4
@@ -29,26 +29,26 @@ TENSORBOARD_PATH = "./sac_cnn_tensorboard"
 SAVE_CHECK_FREQUENCY = 5000
 
 def main(args):
-    """Main training routine."""
+    """메인 훈련 루틴."""
 
     if args.wandb:
         wandb.init(sync_tensorboard=True, project="F1Tenth-RL-SAC")
 
-    # Create log directories
+    # 로그 디렉토리 생성
     os.makedirs(TRAIN_DIRECTORY, exist_ok=True)
     os.makedirs(TENSORBOARD_PATH, exist_ok=True)
     log_dir = "tmp/"
     os.makedirs(log_dir, exist_ok=True)
 
-    # Environment setup function
+    # 환경 설정 함수
     def wrap_env():
         env = gym.make("f110_gym:f110-v0", num_agents=1)
-        # Apply wrappers
+        # 래퍼 적용
         env = F110_Wrapped(env)
         env = RandomF1TenthMap(env, step_interval=MAP_CHANGE_INTERVAL)
         return env
 
-    # Create vectorized environments
+    # 벡터화된 환경 생성
     envs = make_vec_env(
         wrap_env,
         n_envs=NUM_PROCESS,
@@ -57,15 +57,15 @@ def main(args):
         vec_env_cls=SubprocVecEnv
     )
 
-    # Define policy keyword arguments for the custom CNN feature extractor
-    # Using a standard architecture for SAC actor/critic networks
+    # 사용자 정의 CNN 특징 추출기를 위한 정책 키워드 인수 정의
+    # SAC 액터/크리틱 네트워크에 표준 아키텍처 사용
     policy_kwargs = dict(
         features_extractor_class=LidarFeatureExtractor,
         features_extractor_kwargs=dict(features_dim=64),
         net_arch=dict(pi=[256, 256], qf=[256, 256])
     )
 
-    # Load or create the SAC model
+    # SAC 모델 로드 또는 생성
     model, reset_num_timesteps = load_model(
         args.load,
         envs,
@@ -73,7 +73,7 @@ def main(args):
         TENSORBOARD_PATH
     )
 
-    # Callback for saving the best model
+    # 최적 모델 저장을 위한 콜백
     saving_callback = SaveOnBestTrainingRewardCallback(
         check_freq=SAVE_CHECK_FREQUENCY,
         log_dir=log_dir,
@@ -82,7 +82,7 @@ def main(args):
         always_save=args.save
     )
 
-    # Train the model
+    # 모델 훈련
     print("--- Training SAC with CNN Policy ---")
     start_time = time.time()
     model.learn(
@@ -92,7 +92,7 @@ def main(args):
     )
     print(f"Training finished in {time.time() - start_time:.2f}s")
 
-    # Save the final model
+    # 최종 모델 저장
     timestamp = datetime.now().strftime("%d-%m-%Y-%H-%M-%S")
     final_model_path = f"{TRAIN_DIRECTORY}/sac-cnn-{timestamp}-final"
     model.save(final_model_path)
@@ -103,7 +103,7 @@ def main(args):
 
 def load_model(load_arg, envs, policy_kwargs, tensorboard_path):
     """
-    Loads a SAC model from a file or creates a new one.
+    파일에서 SAC 모델을 로드하거나 새로 생성합니다.
     """
     if load_arg:
         reset_num_timesteps = False
@@ -124,13 +124,13 @@ def load_model(load_arg, envs, policy_kwargs, tensorboard_path):
             envs,
             policy_kwargs=policy_kwargs,
             verbose=1,
-            buffer_size=100_000,       # Size of the replay buffer
-            learning_rate=3e-4,         # Corresponds to skrl_sac_cfg.yaml
-            batch_size=256,             # Corresponds to skrl_sac_cfg.yaml
-            gamma=0.99,                 # Discount factor
-            tau=0.005,                  # Polyak update coefficient
-            train_freq=(1, "step"),     # Train after each step
-            learning_starts=10000,      # Learning starts after 10k steps
+            buffer_size=100_000,       # 리플레이 버퍼 크기
+            learning_rate=3e-4,         # skrl_sac_cfg.yaml에 해당
+            batch_size=256,             # skrl_sac_cfg.yaml에 해당
+            gamma=0.99,                 # 할인 계수
+            tau=0.005,                  # Polyak 업데이트 계수
+            train_freq=(1, "step"),     # 각 스텝 후 훈련
+            learning_starts=10000,      # 1만 스텝 후 학습 시작
             tensorboard_log=tensorboard_path
         )
 

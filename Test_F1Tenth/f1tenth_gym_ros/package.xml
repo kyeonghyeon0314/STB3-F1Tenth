@@ -1,0 +1,53 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <!-- 패키지 기본 정보 -->
+  <name>f1tenth_gym_ros</name>
+  <version>0.0.0</version>
+  <description>Bridge for using f1tenth_gym in ROS2</description>
+  <maintainer email="billyzheng.bz@gmail.com">Billy Zheng</maintainer>  
+  <license>MIT</license>
+
+  <!-- 실행 의존성 (런타임에 필요한 패키지들) -->
+  <!-- 기하학적 메시지 타입 (위치, 속도 등) -->
+  <exec_depend>geometry_msgs</exec_depend>
+  <!-- 네비게이션 메시지 타입 (지도, 경로 등) -->
+  <exec_depend>nav_msgs</exec_depend>
+  <!-- 센서 메시지 타입 (라이다, 카메라 등) -->
+  <exec_depend>sensor_msgs</exec_depend>
+  <!-- 애커만 조향 메시지 타입 -->
+  <exec_depend>ackermann_msgs</exec_depend>
+
+  <!-- ROS2 런치 시스템 -->
+  <exec_depend>launch</exec_depend>
+  <!-- ROS2 전용 런치 기능 -->
+  <exec_depend>launch_ros</exec_depend>
+
+  <!-- 좌표 변환 시스템 -->
+  <exec_depend>tf2_ros</exec_depend>
+
+  <!-- Python용 ROS2 클라이언트 라이브러리 -->
+  <exec_depend>rclpy</exec_depend>
+
+  <!-- 조인트 상태 퍼블리셔 -->
+  <exec_depend>joint_state_publisher</exec_depend>
+  <!-- URDF 매크로 처리기 -->
+  <exec_depend>xacro</exec_depend>
+
+  <!-- Nav2 지도 서버 -->
+  <exec_depend>nav2_map_server</exec_depend>
+  <!-- Nav2 라이프사이클 관리자 -->
+  <exec_depend>nav2_lifecycle_manager</exec_depend>
+
+  <!-- 키보드 원격조종 -->
+  <exec_depend>teleop_twist_keyboard</exec_depend>
+  
+  <!-- 빌드 및 실행 의존성 -->
+  <!-- 3D 변환 라이브러리 -->
+  <depend>python-transforms3d-pip</depend>
+
+  <!-- 빌드 타입 설정 -->
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

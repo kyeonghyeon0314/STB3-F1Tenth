@@ -141,7 +141,7 @@ def subsample_points(points, target_spacing):
 def main():
     parser = argparse.ArgumentParser(description='맵 이미지에서 중심선 추출 및 CSV 저장')
     parser.add_argument('--map-dir', type=str,
-                        default='f1tenth_racetracks/Underground',
+                        default='f1tenth_racetracks/underground',
                         help='맵 디렉토리 경로')
     parser.add_argument('--map-name', type=str,
                         default='underground',

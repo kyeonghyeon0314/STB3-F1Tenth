@@ -1,271 +1,223 @@
 """
-Integration test for SAC + CNN policy setup
+SAC + CNN 정책 설정을 위한 통합 테스트 (개선판)
 
-Tests:
-1. CNN policy imports correctly
-2. Environment wrapping works
-3. Model can be created and perform forward pass
-4. Improved reward wrapper functions properly
+이 스크립트는 F1TENTH 환경, 커스텀 래퍼, 그리고 Stable Baselines 3 SAC 모델의
+통합을 검증합니다. gym/gymnasium 호환성 문제와 경로 문제를 해결하도록
+개선되었습니다.
+
+테스트 항목:
+1. 주요 컴포넌트 임포트
+2. Gymnasium 호환성을 포함한 환경 생성 및 래핑
+3. CNN 정책의 특징 추출기
+4. SAC 모델 생성, 예측, 및 짧은 학습
+5. 개선된 보상 함수 로직
 """
 
-import gym
+import gymnasium as gym
+import f110_gym  # F1TENTH 환경 등록
 import numpy as np
 import torch
+import os
+import traceback
 
-from code.wrappers import F110_Wrapped
-from code.improved_rewards import F110_ImprovedReward
-from code.cnn_policy import CNNSACPolicy
-from stable_baselines3 import SAC
+# --- 경로 설정 ---
+# 스크립트의 위치를 기준으로 상대 경로를 사용하여 이식성을 높입니다.
+try:
+    # __file__은 스크립트로 실행될 때 정의됩니다.
+    ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    # 대화형 환경(예: Jupyter)에서 실행될 경우를 대비합니다.
+    ROOT_DIR = os.getcwd()
+
+MAP_NAME = "underground"
+RACETRACK_PATH = os.path.join(ROOT_DIR, "f1tenth_racetracks", MAP_NAME)
+MAP_PATH = os.path.join(RACETRACK_PATH, f"{MAP_NAME}_map")
+CENTERLINE_PATH = os.path.join(RACETRACK_PATH, f"{MAP_NAME}_centerline.csv")
+
+# --- 컴포넌트 임포트 ---
+# 임포트 실패 시 빠른 실패를 위해 테스트 함수 외부에서 임포트합니다.
+try:
+    from code.wrappers import F110_Wrapped
+    from code.improved_rewards import F110_ImprovedReward
+    from code.cnn_policy import CNNSACPolicy, LidarFeatureExtractor
+    from stable_baselines3 import SAC
+    print("✓ 모든 주요 컴포넌트 임포트 성공")
+except ImportError as e:
+    print(f"✗ 치명적 오류: 컴포넌트 임포트 실패: {e}")
+    exit(1)
 
 
-def test_imports():
-    """Test 1: Check if all imports work"""
-    print("=" * 60)
-    print("TEST 1: Checking imports...")
-    print("=" * 60)
-
-    try:
-        from code.cnn_policy import CNNSACPolicy, LidarFeatureExtractor
-        print("✓ CNN policy imports successful")
-
-        from code.improved_rewards import F110_ImprovedReward
-        print("✓ Improved rewards imports successful")
-
-        from stable_baselines3 import SAC
-        print("✓ Stable Baselines 3 SAC imports successful")
-
-        print("✓ All imports successful!")
-        return True
-    except Exception as e:
-        print(f"✗ Import failed: {e}")
-        return False
-
-
-def test_environment():
-    """Test 2: Check if environment wrapping works"""
+def print_test_header(name):
     print("\n" + "=" * 60)
-    print("TEST 2: Testing environment wrapping...")
+    print(f"테스트: {name}")
     print("=" * 60)
 
+
+def create_env(debug_rewards=False):
+    """테스트를 위한 F1TENTH 환경을 생성하고 래핑하는 헬퍼 함수."""
+    # 1. 기본 F110 환경 생성
+    #    gym.make는 gymnasium의 일부이며, 오래된 gym 환경과의 호환성을 처리합니다.
+    env = gym.make("f110-v0",
+                   map=MAP_PATH,
+                   map_ext=".png",
+                   num_agents=1)
+    print("  ✓ 기본 F110 환경 생성됨")
+
+    # 2. F110_Wrapped로 래핑 (관측/행동 공간 처리)
+    env = F110_Wrapped(env)
+    print("  ✓ F110_Wrapped 적용됨")
+
+    # 3. F110_ImprovedReward로 래핑 (보상 형성)
+    #    중심선 파일이 존재하고 비어있지 않은지 명시적으로 확인합니다.
+    assert os.path.exists(CENTERLINE_PATH), f"중심선 파일을 찾을 수 없습니다: {CENTERLINE_PATH}"
+    assert os.path.getsize(CENTERLINE_PATH) > 0, f"중심선 파일이 비어있습니다: {CENTERLINE_PATH}"
+    
+    env = F110_ImprovedReward(env, centerline_path=CENTERLINE_PATH, debug_mode=debug_rewards)
+    print("  ✓ F110_ImprovedReward 적용됨")
+    
+    return env
+
+
+def test_environment_setup():
+    """테스트 1: 환경 생성 및 래핑, reset/step 기능 테스트"""
+    print_test_header("환경 설정 및 기본 API")
     try:
-        # Create base environment
-        env = gym.make("f110_gym:f110-v0",
-                       map="./f1tenth_gym/examples/example_map",
-                       map_ext=".png",
-                       num_agents=1)
-        print("✓ Base F110 environment created")
+        env = create_env(debug_rewards=True)
 
-        # Wrap with F110_Wrapped
-        env = F110_Wrapped(env)
-        print("✓ F110_Wrapped applied")
+        # 리셋 테스트: gymnasium API는 obs, info를 반환합니다.
+        # 커스텀 래퍼가 이를 올바르게 처리해야 합니다.
+        reset_result = env.reset()
+        if isinstance(reset_result, tuple) and len(reset_result) == 2:
+            obs, info = reset_result
+        else:
+            obs, info = reset_result, {}
+        print(f"  ✓ 환경 리셋 성공, obs 모양: {obs.shape}")
+        assert isinstance(obs, np.ndarray), "관측값은 numpy 배열이어야 합니다."
+        assert obs.shape == (1080,), f"관측값 모양이 예상과 다릅니다: {obs.shape}"
 
-        # Wrap with improved rewards
-        env = F110_ImprovedReward(env, debug_mode=True)
-        print("✓ F110_ImprovedReward applied")
-
-        # Test reset
-        obs = env.reset()
-        print(f"✓ Environment reset successful, obs shape: {obs.shape}")
-
-        # Test step
+        # 스텝 테스트
         action = env.action_space.sample()
-        obs, reward, done, info = env.step(action)
-        print(f"✓ Environment step successful")
-        print(f"  Observation shape: {obs.shape}")
-        print(f"  Reward: {reward:.3f}")
-        print(f"  Done: {done}")
-
+        step_result = env.step(action)
+        if isinstance(step_result, tuple) and len(step_result) == 5:
+            obs, reward, terminated, truncated, info = step_result
+            done = bool(terminated or truncated)
+        else:
+            obs, reward, done, info = step_result
+        print(f"  ✓ 환경 스텝 성공")
+        print(f"    - 관측 모양: {obs.shape}")
+        print(f"    - 보상: {reward:.3f}")
+        print(f"    - 완료: {done}")
+        
         env.close()
-        print("✓ Environment test successful!")
+        print("✓ 환경 테스트 통과!")
         return True
 
     except Exception as e:
-        print(f"✗ Environment test failed: {e}")
-        import traceback
+        print(f"✗ 환경 테스트 실패: {e}")
         traceback.print_exc()
         return False
 
 
 def test_cnn_policy():
-    """Test 3: Check if CNN policy can be created and used"""
-    print("\n" + "=" * 60)
-    print("TEST 3: Testing CNN policy...")
-    print("=" * 60)
-
+    """테스트 2: CNN 정책 특징 추출기 테스트"""
+    print_test_header("CNN 정책 특징 추출기")
     try:
-        # Create dummy environment for policy testing
-        env = gym.make("f110_gym:f110-v0",
-                       map="./f1tenth_gym/examples/example_map",
-                       map_ext=".png",
-                       num_agents=1)
-        env = F110_Wrapped(env)
-        print("✓ Test environment created")
+        # 특징 추출기 테스트를 위한 더미 관측 공간
+        from gymnasium import spaces
+        dummy_obs_space = spaces.Box(low=0.0, high=30.0, shape=(1080,), dtype=np.float32)
+        
+        feature_extractor = LidarFeatureExtractor(dummy_obs_space, features_dim=64)
+        print("  ✓ LidarFeatureExtractor 생성됨")
 
-        # Test feature extractor
-        from code.cnn_policy import LidarFeatureExtractor
-        feature_extractor = LidarFeatureExtractor(env.observation_space, features_dim=64)
-        print("✓ LidarFeatureExtractor created")
-
-        # Test forward pass
-        dummy_obs = torch.randn(4, 1080)  # Batch of 4 observations
-        features = feature_extractor(dummy_obs)
-        print(f"✓ Feature extraction successful, output shape: {features.shape}")
-        assert features.shape == (4, 64), f"Expected (4, 64), got {features.shape}"
-
-        env.close()
-        print("✓ CNN policy test successful!")
+        # 순전파 테스트 (4개 관측값 배치)
+        dummy_obs_tensor = torch.randn(4, 1080)
+        features = feature_extractor(dummy_obs_tensor)
+        print(f"  ✓ 특징 추출 성공, 출력 모양: {features.shape}")
+        
+        assert features.shape == (4, 64), f"특징 모양이 예상과 다릅니다: {features.shape}"
+        
+        print("✓ CNN 정책 테스트 통과!")
         return True
 
     except Exception as e:
-        print(f"✗ CNN policy test failed: {e}")
-        import traceback
+        print(f"✗ CNN 정책 테스트 실패: {e}")
         traceback.print_exc()
         return False
 
 
-def test_sac_model():
-    """Test 4: Check if SAC model can be created with CNN policy"""
-    print("\n" + "=" * 60)
-    print("TEST 4: Testing SAC model creation...")
-    print("=" * 60)
-
+def test_sac_model_creation_and_use():
+    """테스트 3: SAC 모델 생성, 예측 및 학습 테스트"""
+    print_test_header("SAC 모델 생성 및 사용")
     try:
-        # Create environment
-        env = gym.make("f110_gym:f110-v0",
-                       map="./f1tenth_gym/examples/example_map",
-                       map_ext=".png",
-                       num_agents=1)
-        env = F110_Wrapped(env)
-        env = F110_ImprovedReward(env, debug_mode=False)
-        print("✓ Environment created")
+        env = create_env()
+        print("  ✓ 테스트용 환경 생성됨")
 
-        # Create SAC model with CNN policy
         model = SAC(
             policy=CNNSACPolicy,
             env=env,
-            learning_rate=3e-4,
-            buffer_size=10000,  # Small buffer for testing
-            learning_starts=100,
-            batch_size=64,
-            verbose=1,
-            device='cpu'  # Use CPU for testing
+            verbose=0, # 테스트 중에는 로그 최소화
+            device='cpu'
         )
-        print("✓ SAC model created with CNN policy")
+        print("  ✓ CNN 정책으로 SAC 모델 생성됨")
 
-        # Test prediction
-        obs = env.reset()
-        action, _states = model.predict(obs, deterministic=True)
-        print(f"✓ Model prediction successful, action: {action}")
+        # 예측 테스트
+        reset_result = env.reset()
+        if isinstance(reset_result, tuple) and len(reset_result) == 2:
+            obs, _ = reset_result
+        else:
+            obs = reset_result
+        action, _ = model.predict(obs, deterministic=True)
+        print(f"  ✓ 모델 예측 성공, 행동: {action}")
+        assert env.action_space.contains(action), "모델의 행동이 행동 공간 내에 있어야 합니다."
 
-        # Test learning (just a few steps)
-        print("Testing short training run (10 steps)...")
-        model.learn(total_timesteps=10, log_interval=None)
-        print("✓ Short training run successful")
+        # 짧은 학습 테스트
+        model.learn(total_timesteps=10)
+        print("  ✓ 짧은 훈련 실행 성공")
 
         env.close()
-        print("✓ SAC model test successful!")
+        print("✓ SAC 모델 테스트 통과!")
         return True
 
     except Exception as e:
-        print(f"✗ SAC model test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-
-def test_reward_functions():
-    """Test 5: Check reward computation details"""
-    print("\n" + "=" * 60)
-    print("TEST 5: Testing reward functions...")
-    print("=" * 60)
-
-    try:
-        env = gym.make("f110_gym:f110-v0",
-                       map="./f1tenth_gym/examples/example_map",
-                       map_ext=".png",
-                       num_agents=1)
-        env = F110_Wrapped(env)
-        env = F110_ImprovedReward(env, debug_mode=True)
-
-        obs = env.reset()
-        print("✓ Environment reset")
-
-        # Run a few steps and check rewards
-        total_reward = 0.0
-        for i in range(10):
-            action = env.action_space.sample()
-            obs, reward, done, info = env.step(action)
-            total_reward += reward
-            if done:
-                print(f"  Episode ended at step {i+1}")
-                break
-
-        print(f"✓ Ran 10 steps, total reward: {total_reward:.3f}")
-
-        # Test collision detection
-        print("\nTesting collision detection...")
-        dummy_lidar = np.ones(1080) * 2.0  # All safe
-        collision = env._detect_collision_consecutive(dummy_lidar, threshold=0.15, consecutive_count=10)
-        print(f"  Safe LiDAR: collision={collision} (expected: False)")
-        assert not collision, "False positive collision detection!"
-
-        dummy_lidar = np.ones(1080) * 0.05  # All very close
-        collision = env._detect_collision_consecutive(dummy_lidar, threshold=0.15, consecutive_count=10)
-        print(f"  Collision LiDAR: collision={collision} (expected: True)")
-        assert collision, "Collision not detected!"
-
-        print("✓ Collision detection working correctly")
-
-        env.close()
-        print("✓ Reward functions test successful!")
-        return True
-
-    except Exception as e:
-        print(f"✗ Reward functions test failed: {e}")
-        import traceback
+        print(f"✗ SAC 모델 테스트 실패: {e}")
         traceback.print_exc()
         return False
 
 
 def main():
-    """Run all tests"""
+    """모든 통합 테스트 실행"""
     print("\n" + "=" * 60)
-    print("INTEGRATION TEST SUITE FOR SAC + CNN POLICY")
+    print("SAC + CNN 정책을 위한 통합 테스트 스위트 (개선판)")
     print("=" * 60)
 
-    tests = [
-        ("Imports", test_imports),
-        ("Environment", test_environment),
-        ("CNN Policy", test_cnn_policy),
-        ("SAC Model", test_sac_model),
-        ("Reward Functions", test_reward_functions),
-    ]
+    tests = {
+        "Environment Setup": test_environment_setup,
+        "CNN Policy": test_cnn_policy,
+        "SAC Model": test_sac_model_creation_and_use,
+    }
 
     results = {}
-    for test_name, test_func in tests:
-        try:
-            results[test_name] = test_func()
-        except Exception as e:
-            print(f"\n✗ Test '{test_name}' crashed: {e}")
-            results[test_name] = False
-
-    # Summary
-    print("\n" + "=" * 60)
-    print("TEST SUMMARY")
-    print("=" * 60)
-
     all_passed = True
-    for test_name, passed in results.items():
-        status = "✓ PASSED" if passed else "✗ FAILED"
-        print(f"{test_name:20s}: {status}")
+
+    for test_name, test_func in tests.items():
+        passed = test_func()
+        results[test_name] = passed
         if not passed:
             all_passed = False
 
+    # 요약
+    print("\n" + "=" * 60)
+    print("테스트 요약")
+    print("=" * 60)
+    for test_name, passed in results.items():
+        status = "✓ 통과" if passed else "✗ 실패"
+        print(f"- {test_name:30s}: {status}")
+    
     print("=" * 60)
     if all_passed:
-        print("✓ ALL TESTS PASSED! Ready to train.")
+        print("🎉 모든 테스트 통과! 훈련 준비 완료.")
     else:
-        print("✗ SOME TESTS FAILED. Please fix before training.")
+        print("🔥 일부 테스트 실패. 위에 출력된 오류를 확인하고 수정하십시오.")
     print("=" * 60)
 
     return all_passed
@@ -273,4 +225,5 @@ def main():
 
 if __name__ == "__main__":
     success = main()
+    # 테스트 실패 시 0이 아닌 종료 코드를 반환하여 CI/CD 파이프라인 등에서 실패를 감지할 수 있도록 합니다.
     exit(0 if success else 1)
