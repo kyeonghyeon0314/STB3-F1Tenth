@@ -57,6 +57,30 @@ RUN apt-get update && \
     freeglut3-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Install ROS2 Humble
+RUN apt-get update && \
+    apt-get install -y \
+    locales \
+    software-properties-common \
+    curl \
+    gnupg \
+    lsb-release \
+    && locale-gen en_US en_US.UTF-8 \
+    && update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 \
+    && export LANG=en_US.UTF-8 \
+    && curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/ros2.list > /dev/null \
+    && apt-get update \
+    && apt-get install -y \
+    ros-humble-desktop \
+    ros-humble-ros-base \
+    python3-colcon-common-extensions \
+    python3-rosdep \
+    && rm -rf /var/lib/apt/lists/*
+
+# Initialize rosdep
+RUN rosdep init && rosdep update
+
 # Upgrade pip
 RUN pip3 install --upgrade pip setuptools wheel
 
@@ -103,24 +127,30 @@ RUN pip3 install --no-cache-dir \
     pytest
 
 # Set environment variables
-ENV HOME=/home/F1Tenth-RL
-ENV PYTHONPATH="${PYTHONPATH}:/home/F1Tenth-RL:/home/F1Tenth-RL/f1tenth_gym_ros"
+ENV HOME=/home/STB3-F1Tenth
+ENV PYTHONPATH="${PYTHONPATH}:/home/STB3-F1Tenth:/home/STB3-F1Tenth/f1tenth_gym_ros"
+ENV LANG=en_US.UTF-8
+ENV ROS_DISTRO=humble
+
+# Source ROS2 setup in bashrc for interactive shells
+RUN echo "source /opt/ros/humble/setup.bash" >> /root/.bashrc
 
 # Create working directory
-WORKDIR /home/F1Tenth-RL
+WORKDIR /home/STB3-F1Tenth
 
 # Copy project files
-COPY . /home/F1Tenth-RL/
+COPY . /home/STB3-F1Tenth/
 
 # Install F1Tenth Gym package
-RUN cd /home/F1Tenth-RL/f1tenth_gym_ros && \
+RUN cd /home/STB3-F1Tenth/f1tenth_gym_ros && \
     pip3 install --no-cache-dir -e .
 
 # Verify installations
 RUN python3 -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}')" && \
     python3 -c "import stable_baselines3; print(f'Stable-Baselines3: {stable_baselines3.__version__}')" && \
     python3 -c "import gymnasium; print(f'Gymnasium: {gymnasium.__version__}')" && \
-    python3 -c "import gym; print(f'Gym: {gym.__version__}')"
+    python3 -c "import gym; print(f'Gym: {gym.__version__}')" && \
+    bash -c "source /opt/ros/humble/setup.bash && ros2 --version"
 
 # Open terminal when container starts
 ENTRYPOINT ["/bin/bash"]

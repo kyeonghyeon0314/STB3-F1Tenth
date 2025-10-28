@@ -10,7 +10,7 @@ docker run -it \
     --network=host \
     -e DISPLAY=$DISPLAY \
     -v /tmp/.X11-unix:/tmp/.X11-unix \
-    -v $PWD:/home/F1Tenth-RL \
+    -v $PWD:/home/STB3-F1Tenth \
     f1tenth-rl:latest
 
 # Note: --rm flag will automatically clean up the container after exit
