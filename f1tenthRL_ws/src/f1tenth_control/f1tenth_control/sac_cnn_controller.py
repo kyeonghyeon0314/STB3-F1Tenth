@@ -46,7 +46,7 @@ class SacCnnController(Node):
         self.declare_parameter('deterministic', True)
         self.declare_parameter('scan_topic', '/scan')
         self.declare_parameter('drive_topic', '/drive')
-        self.declare_parameter('drive_frame_id', 'base_link')
+        self.declare_parameter('drive_frame_id', 'ego_racecar/base_link')
         self.declare_parameter('marker_topic', '/sac_control/marker')
         self.declare_parameter('lidar_clip', 30.0)
         self.declare_parameter('observation_dim', 1080)

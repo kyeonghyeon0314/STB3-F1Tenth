@@ -12,3 +12,6 @@ build/
 install/
 log/
 .ros/
+.rviz2/
+wandb/
+.python_history

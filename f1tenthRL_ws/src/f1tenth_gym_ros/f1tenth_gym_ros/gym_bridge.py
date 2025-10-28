@@ -15,6 +15,7 @@ from pathlib import Path
 import gymnasium as gym
 import numpy as np
 from transforms3d import euler
+from ament_index_python.packages import get_package_share_directory
 
 class GymBridge(Node):
     """
@@ -28,7 +29,7 @@ class GymBridge(Node):
         super().__init__('gym_bridge')
         
         package_root = Path(__file__).resolve().parents[1]
-        default_map_prefix = str(package_root / 'maps' / 'Spielberg_map')
+        default_map_prefix = str(package_root / 'maps' / 'underground_map')
 
         default_params = {
             'ego_namespace': 'ego_racecar',
@@ -74,11 +75,35 @@ class GymBridge(Node):
         self.angle_max = scan_fov / 2.
         self.angle_inc = scan_fov / scan_beams
         self.scan_distance_to_base_link = self.get_parameter('scan_distance_to_base_link').value
-        
+
+        # Centerline 첫 번째 점에서 시작하도록 설정
+        try:
+            pkg_share_dir = get_package_share_directory('f1tenth_gym_ros')
+            centerline_path = Path(pkg_share_dir) / 'maps' / 'underground_centerline.csv'
+            centerline_data = np.loadtxt(centerline_path, delimiter=',', dtype=float)
+            centerline_data = np.atleast_2d(centerline_data)
+            if centerline_data.shape[1] >= 2 and centerline_data.shape[0] >= 2:
+                # 첫 번째 점의 위치
+                start_x = float(centerline_data[0, 0])
+                start_y = float(centerline_data[0, 1])
+                # 첫 번째와 두 번째 점 사이의 방향
+                start_theta = float(np.arctan2(
+                    centerline_data[1, 1] - centerline_data[0, 1],
+                    centerline_data[1, 0] - centerline_data[0, 0]
+                ))
+                self.get_logger().info(f'Centerline 첫 점에서 시작: x={start_x:.3f}, y={start_y:.3f}, theta={start_theta:.3f}')
+            else:
+                raise ValueError('Centerline must have at least 2 points')
+        except Exception as exc:
+            self.get_logger().warning(f'Centerline 로드 실패, 기본 위치 사용: {exc}')
+            start_x = self.get_parameter('sx').value
+            start_y = self.get_parameter('sy').value
+            start_theta = self.get_parameter('stheta').value
+
         # 메인 차량(ego) 설정
-        sx = self.get_parameter('sx').value
-        sy = self.get_parameter('sy').value
-        stheta = self.get_parameter('stheta').value
+        sx = start_x
+        sy = start_y
+        stheta = start_theta
         self.ego_namespace = self.get_parameter('ego_namespace').value
         self.ego_pose = [sx, sy, stheta]
         self.ego_speed = [0.0, 0.0, 0.0]
@@ -147,13 +172,15 @@ class GymBridge(Node):
         # 서브스크라이버
         self.ego_drive_sub = self.create_subscription(
             AckermannDriveStamped, ego_drive_topic, self.drive_callback, 10)
+        # RViz 2D Pose Estimate를 통한 수동 리셋 허용
         self.ego_reset_sub = self.create_subscription(
             PoseWithCovarianceStamped, '/initialpose', self.ego_reset_callback, 10)
-        
+
         if self.has_opp:
             opp_drive_topic = self.get_parameter('opp_drive_topic').value
             self.opp_drive_sub = self.create_subscription(
                 AckermannDriveStamped, opp_drive_topic, self.opp_drive_callback, 10)
+            # RViz 2D Nav Goal을 통한 수동 리셋 허용
             self.opp_reset_sub = self.create_subscription(
                 PoseStamped, '/goal_pose', self.opp_reset_callback, 10)
         
@@ -207,6 +234,9 @@ class GymBridge(Node):
         self.obs, _ = self.env.reset(options={'poses': np.asarray(poses, dtype=float)})
         self.terminated = False
         self.truncated = False
+        # 충돌 로그 플래그 초기화 (재시작 가능하도록)
+        if hasattr(self, '_collision_logged'):
+            delattr(self, '_collision_logged')
         self._update_sim_state()
 
     def ego_reset_callback(self, pose_msg):
@@ -224,7 +254,9 @@ class GymBridge(Node):
         rqz = pose_msg.pose.pose.orientation.z
         rqw = pose_msg.pose.pose.orientation.w
         _, _, rtheta = euler.quat2euler([rqw, rqx, rqy, rqz], axes='sxyz')
-        
+
+        self.get_logger().info(f'수동 리셋: 새 위치 x={rx:.3f}, y={ry:.3f}, theta={rtheta:.3f}')
+
         if self.has_opp:
             opp_pose = [self.obs['poses_x'][1], self.obs['poses_y'][1], self.obs['poses_theta'][1]]
             poses = np.array([[rx, ry, rtheta], opp_pose], dtype=float)
@@ -257,7 +289,15 @@ class GymBridge(Node):
         - 목적: 현재 명령(ego/opp)을 바탕으로 env.step을 1스텝 진행
         - 주기: 0.01s (100 Hz)
         - (ego_drive_published 플래그) 최초 명령 수신 전에는 스텝을 진행 X
+        - 충돌/종료 시 자동 리셋을 방지하기 위해 step 중단
         """
+        # 충돌 또는 종료 상태면 step을 진행하지 않음 (자동 리셋 방지)
+        if self.terminated or self.truncated:
+            if not hasattr(self, '_collision_logged'):
+                self.get_logger().warn('Collision or termination detected - stopping simulation step')
+                self._collision_logged = True
+            return
+
         if self.ego_drive_published and not self.has_opp:
             step_action = np.array([[self.ego_steer, self.ego_requested_speed]], dtype=np.float32)
             self.obs, _, self.terminated, self.truncated, _ = self.env.step(step_action)

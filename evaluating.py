@@ -25,7 +25,7 @@
 """
 
 import os
-import gym
+import gymnasium as gym
 import time
 import glob
 import argparse
@@ -40,7 +40,7 @@ from code.wrappers import F110_Wrapped, RandomMap
 
 TRAIN_DIRECTORY = "./train"
 MIN_EVAL_EPISODES = 5
-MAP_PATH = "./f1tenth_gym_ros/examples/example_map"
+MAP_PATH = "./f1tenth_racetracks/underground/underground_map"
 MAP_EXTENSION = ".png"
 MAP_CHANGE_INTERVAL = 3000
 

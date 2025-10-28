@@ -39,7 +39,7 @@ def generate_launch_description():
 
     drive_frame_arg = DeclareLaunchArgument(
         'drive_frame_id',
-        default_value='base_link',
+        default_value='ego_racecar/base_link',
         description='드라이브 메시지 frame_id'
     )
 

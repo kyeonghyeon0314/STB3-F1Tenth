@@ -1,6 +1,5 @@
 import os
 
-import gym
 import time
 import wandb
 import numpy as np
@@ -9,6 +8,7 @@ from datetime import datetime
 
 from stable_baselines3.common.results_plotter import load_results, ts2xy, plot_results
 from stable_baselines3.common.callbacks import BaseCallback
+from torch.optim.lr_scheduler import CosineAnnealingLR
 
 
 class SaveOnBestTrainingRewardCallback(BaseCallback):
@@ -72,3 +72,83 @@ class SaveOnBestTrainingRewardCallback(BaseCallback):
                             f"{self.save_path}/sac-{timestamp}-{int(mean_reward)}R.zip")
 
         return True
+
+
+class LearningRateSchedulerCallback(BaseCallback):
+    """
+    학습률 스케줄러를 관리하고 TensorBoard에 모든 학습률을 로깅하는 콜백.
+
+    이 콜백은:
+    1. 각 학습 스텝마다 모든 optimizer의 스케줄러를 업데이트
+    2. 현재 학습률을 TensorBoard에 로깅 (Actor CNN/MLP, Critic CNN/MLP, Entropy)
+
+    :param schedulers: dict, 스케줄러 딕셔너리 {'actor': scheduler, 'critic': scheduler, 'entropy': scheduler}
+    :param log_freq: int, 로깅 빈도 (스텝 단위)
+    :param verbose: int, 상세 출력 레벨
+    """
+
+    def __init__(self, schedulers: dict, log_freq: int = 100, verbose: int = 0):
+        super().__init__(verbose)
+        self.schedulers = schedulers
+        self.log_freq = log_freq
+        self.last_log = 0
+
+    def _on_step(self) -> bool:
+        """매 스텝마다 호출"""
+        # 로깅 시간인지 확인
+        if self.num_timesteps >= self.last_log + self.log_freq:
+            self.last_log = self.num_timesteps
+
+            # Actor 학습률 로깅 (CNN과 MLP 구분)
+            if 'actor' in self.schedulers and self.schedulers['actor'] is not None:
+                actor_optimizer = self.model.actor.optimizer
+                param_groups = actor_optimizer.param_groups
+
+                if len(param_groups) >= 2:
+                    # CNN과 MLP가 분리되어 있는 경우
+                    actor_cnn_lr = param_groups[0]['lr']
+                    actor_mlp_lr = param_groups[1]['lr']
+                    self.logger.record("train/actor_cnn_lr", actor_cnn_lr)
+                    self.logger.record("train/actor_mlp_lr", actor_mlp_lr)
+                elif len(param_groups) == 1:
+                    # 단일 파라미터 그룹
+                    actor_lr = param_groups[0]['lr']
+                    self.logger.record("train/actor_lr", actor_lr)
+
+            # Critic 학습률 로깅 (CNN과 MLP 구분)
+            if 'critic' in self.schedulers and self.schedulers['critic'] is not None:
+                critic_optimizer = self.model.critic.optimizer
+                param_groups = critic_optimizer.param_groups
+
+                if len(param_groups) >= 2:
+                    # CNN과 MLP가 분리되어 있는 경우
+                    critic_cnn_lr = param_groups[0]['lr']
+                    critic_mlp_lr = param_groups[1]['lr']
+                    self.logger.record("train/critic_cnn_lr", critic_cnn_lr)
+                    self.logger.record("train/critic_mlp_lr", critic_mlp_lr)
+                elif len(param_groups) == 1:
+                    # 단일 파라미터 그룹
+                    critic_lr = param_groups[0]['lr']
+                    self.logger.record("train/critic_lr", critic_lr)
+
+            # Entropy 학습률 로깅
+            if 'entropy' in self.schedulers and self.schedulers['entropy'] is not None:
+                entropy_optimizer = self.model.log_ent_coef_optimizer
+                entropy_lr = entropy_optimizer.param_groups[0]['lr']
+                self.logger.record("train/entropy_lr", entropy_lr)
+
+        return True
+
+    def _on_rollout_end(self) -> None:
+        """Rollout이 끝날 때마다 스케줄러 업데이트"""
+        # Actor 스케줄러 스텝
+        if 'actor' in self.schedulers and self.schedulers['actor'] is not None:
+            self.schedulers['actor'].step()
+
+        # Critic 스케줄러 스텝
+        if 'critic' in self.schedulers and self.schedulers['critic'] is not None:
+            self.schedulers['critic'].step()
+
+        # Entropy 스케줄러 스텝
+        if 'entropy' in self.schedulers and self.schedulers['entropy'] is not None:
+            self.schedulers['entropy'].step()

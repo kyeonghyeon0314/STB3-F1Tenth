@@ -65,6 +65,7 @@ class F110_ImprovedReward(gym.Wrapper):
         self.episode_forward_sum = 0.0
         self.episode_speed_sum = 0.0
         self.episode_danger_sum = 0.0
+        self.episode_alive_sum = 0.0
 
         print(f"[ImprovedReward] Initialized with centerline: {centerline_path}")
         print(f"  - Track length: {self.track_length:.2f}m")
@@ -204,37 +205,45 @@ class F110_ImprovedReward(gym.Wrapper):
 
         # --- 보상 계산 ---
 
-        # 1) 트랙 진행 보상
+        # 1) 트랙 진행 보상 (주요 목표)
         _, progress_delta = self._get_track_progress(pos_xy)
-        reward_forward = np.clip(progress_delta, 0.0, None) * 18.0  # 미터당 18점
+        FORWARD_SCALE = 5.0  # 12.0 → 5.0으로 감소 (덜 지배적)
+        reward_forward = np.clip(progress_delta, 0.0, None) * FORWARD_SCALE
 
-        # 2) 속도 보상 (전진 방향)
+        # 2) 속도 보상 (빠른 주행 장려)
         forward_direction = self._get_centerline_direction()
         forward_speed = np.sum(vel_xy * forward_direction)
-        reward_speed = np.clip(forward_speed / 5.0, 0.0, 1.0) * 1.2  # 최대 속도로 정규화
+        # 속도 보상 증가: 최대 속도(5 m/s)에서 최대 3.0 보상
+        SPEED_SCALE = 3.0  # 1.0 → 3.0으로 증가
+        reward_speed = np.clip(forward_speed / 5.0, 0.0, 1.0) * SPEED_SCALE
 
-        # 3) 저속 페널티 (역함수)
-        TARGET_SPEED = 1.0  # m/s
-        PENALTY_SCALE = 1.0
-        MIN_SPEED_RATIO = 0.05  # 폭발 방지
+        # 3) 저속 페널티 (정체 방지) - 완화됨
+        TARGET_SPEED = 2.0  # 1.0 → 2.0 m/s로 증가 (더 공격적인 주행 장려)
+        PENALTY_SCALE = 0.1  # 0.2 → 0.1로 감소 (덜 가혹함)
+        MIN_SPEED_RATIO = 0.1  # 0.05 → 0.1 (폭발 방지)
 
         speed_ratio = np.clip(forward_speed / TARGET_SPEED, MIN_SPEED_RATIO, 10.0)
         reward_survival = -PENALTY_SCALE / speed_ratio + PENALTY_SCALE
-        reward_survival = np.clip(reward_survival, -10.0, 1.0)
+        reward_survival = np.clip(reward_survival, -1.0, 0.1)  # -2.0 → -1.0으로 완화
 
-        # 4) 위험 페널티 (지수적 벽 근접성)
+        # 4) 위험 페널티 (벽 근접성) - 완화됨
         min_distance = np.min(lidar_scan)
 
-        WARNING_DISTANCE = 0.25  # 25cm
-        PENALTY_SCALE_DANGER = 4.0
-        EXP_STEEPNESS = 8.0
+        WARNING_DISTANCE = 0.20  # 0.25 → 0.20cm (더 가까이 가도 괜찮음)
+        PENALTY_SCALE_DANGER = 1.0  # 2.0 → 1.0으로 감소
+        EXP_STEEPNESS = 6.0  # 8.0 → 6.0으로 감소 (덜 가파른 페널티)
 
         proximity = np.clip(WARNING_DISTANCE - min_distance, 0.0, None)
         danger_penalty = -PENALTY_SCALE_DANGER * (np.exp(EXP_STEEPNESS * proximity) - 1.0)
-        danger_penalty = np.clip(danger_penalty, -10.0, 0.0)
+        danger_penalty = np.clip(danger_penalty, -2.0, 0.0)  # -5.0 → -2.0으로 완화
+
+        ALIVE_BONUS = 0.1  # 0.05 → 0.1로 증가 (생존 장려)
 
         # 총 보상
-        reward = reward_forward + reward_speed + reward_survival + danger_penalty
+        # 예상 범위: forward(0~5) + speed(0~3) + survival(-1~0.1) + danger(-2~0) + alive(0.1)
+        # 좋은 주행: 5 + 3 + 0 + (-0.5) + 0.1 = 7.6
+        # 나쁜 주행: 0 + 0 + (-1) + (-2) + 0.1 = -2.9
+        reward = reward_forward + reward_speed + reward_survival + danger_penalty + ALIVE_BONUS
 
         # --- 종료 조건 ---
 
@@ -265,6 +274,7 @@ class F110_ImprovedReward(gym.Wrapper):
         self.episode_forward_sum += reward_forward
         self.episode_speed_sum += reward_speed
         self.episode_danger_sum += danger_penalty
+        self.episode_alive_sum += ALIVE_BONUS
 
         episode_done = bool(terminated or truncated)
 
@@ -273,7 +283,8 @@ class F110_ImprovedReward(gym.Wrapper):
             avg_reward = self.episode_reward_sum / max(self.episode_step, 1)
             print(f"[Episode Summary] Steps: {self.episode_step}, Total Distance: {self.total_distance:.2f}m")
             print(f"  Rewards: Total={self.episode_reward_sum:.2f}, Avg={avg_reward:.3f}")
-            print(f"  Forward: {self.episode_forward_sum:.2f}, Speed: {self.episode_speed_sum:.2f}, Danger: {self.episode_danger_sum:.2f}")
+            print(f"  Forward: {self.episode_forward_sum:.2f}, Speed: {self.episode_speed_sum:.2f}, "
+                  f"Danger: {self.episode_danger_sum:.2f}, Alive: {self.episode_alive_sum:.2f}")
 
         # 이전 위치 업데이트
         self.previous_pos = pos_xy.copy()
@@ -284,6 +295,7 @@ class F110_ImprovedReward(gym.Wrapper):
             'speed': reward_speed,
             'survival': reward_survival,
             'danger': danger_penalty,
+            'alive': ALIVE_BONUS,
             'base': base_reward,
         })
 
@@ -332,6 +344,7 @@ class F110_ImprovedReward(gym.Wrapper):
         self.episode_forward_sum = 0.0
         self.episode_speed_sum = 0.0
         self.episode_danger_sum = 0.0
+        self.episode_alive_sum = 0.0
 
         info.setdefault('reward_components', {})
 

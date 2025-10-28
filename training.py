@@ -3,7 +3,7 @@ SAC와 사용자 정의 CNN 정책을 사용하는 F1Tenth Gym용 Stable Baselin
 """
 
 import os
-import gym
+import gymnasium as gym
 import time
 import glob
 import wandb

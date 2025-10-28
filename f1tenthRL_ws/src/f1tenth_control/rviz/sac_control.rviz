@@ -3,15 +3,16 @@ Panels:
     Help Height: 78
     Name: Displays
     Property Tree Widget:
-      Expanded: ~
+      Expanded:
+        - /Status1
       Splitter Ratio: 0.5
-    Tree Height: 555
+    Tree Height: 354
   - Class: rviz_common/Selection
     Name: Selection
   - Class: rviz_common/Tool Properties
-    Name: Tool Properties
     Expanded:
       - /2D Goal Pose1
+    Name: Tool Properties
     Splitter Ratio: 0.5886790156364441
   - Class: rviz_common/Views
     Expanded:
@@ -20,81 +21,221 @@ Panels:
     Splitter Ratio: 0.5
 Visualization Manager:
   Class: ""
+  Displays:
+    - Alpha: 0.5
+      Cell Size: 1
+      Class: rviz_default_plugins/Grid
+      Color: 160; 160; 164
+      Enabled: true
+      Line Style:
+        Line Width: 0.029999999329447746
+        Value: Lines
+      Name: Grid
+      Normal Cell Count: 0
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Plane: XY
+      Plane Cell Count: 20
+      Reference Frame: <Fixed Frame>
+      Value: true
+    - Class: rviz_default_plugins/TF
+      Enabled: true
+      Frame Timeout: 15
+      Frames:
+        All Enabled: true
+        ego_racecar/back_left_wheel:
+          Value: true
+        ego_racecar/back_right_wheel:
+          Value: true
+        ego_racecar/base_link:
+          Value: true
+        ego_racecar/front_left_hinge:
+          Value: true
+        ego_racecar/front_left_wheel:
+          Value: true
+        ego_racecar/front_right_hinge:
+          Value: true
+        ego_racecar/front_right_wheel:
+          Value: true
+        ego_racecar/laser:
+          Value: true
+        ego_racecar/laser_model:
+          Value: true
+        map:
+          Value: true
+      Marker Scale: 1
+      Name: TF
+      Show Arrows: true
+      Show Axes: true
+      Show Names: false
+      Tree:
+        map:
+          ego_racecar/base_link:
+            ego_racecar/back_left_wheel:
+              {}
+            ego_racecar/back_right_wheel:
+              {}
+            ego_racecar/front_left_hinge:
+              ego_racecar/front_left_wheel:
+                {}
+            ego_racecar/front_right_hinge:
+              ego_racecar/front_right_wheel:
+                {}
+            ego_racecar/laser:
+              {}
+            ego_racecar/laser_model:
+              {}
+      Update Interval: 0
+      Value: true
+    - Alpha: 1
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 10
+        Min Value: -10
+        Value: true
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz_default_plugins/LaserScan
+      Color: 255; 255; 255
+      Color Transformer: Intensity
+      Decay Time: 0
+      Enabled: true
+      Invert Rainbow: false
+      Max Color: 255; 255; 255
+      Max Intensity: 4096
+      Min Color: 0; 0; 0
+      Min Intensity: 0
+      Name: LiDAR
+      Position Transformer: XYZ
+      Selectable: true
+      Size (Pixels): 3
+      Size (m): 0.05000000074505806
+      Style: Flat Squares
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /scan
+      Use Fixed Frame: true
+      Use rainbow: true
+      Value: true
+    - Class: rviz_default_plugins/RobotModel
+      Description Source: Topic
+      Description Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: ego_robot_description
+      Enabled: true
+      Name: RobotModel
+      TF Prefix: ""
+      Update Interval: 0
+      Visual Enabled: true
+      Value: true
+    - Alpha: 0.7
+      Class: rviz_default_plugins/Map
+      Color Scheme: map
+      Draw Behind: false
+      Enabled: true
+      Name: Map
+      Topic:
+        Depth: 5
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /map
+      Unreliable: false
+      Use Timestamp: false
+      Value: true
+    - Class: rviz_default_plugins/Marker
+      Enabled: true
+      Name: SAC Control
+      Namespaces:
+        {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /sac_control/marker
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
-    Fixed Frame: base_link
+    Fixed Frame: map
     Frame Rate: 30
-  Displays:
-    - Class: rviz_default_plugins/Grid
-      Name: Grid
-      Enabled: true
-      Cell Size: 1
-      Plane Cell Count: 20
-    - Class: rviz_default_plugins/TF
-      Name: TF
-      Enabled: true
-    - Class: rviz_default_plugins/LaserScan
-      Name: LiDAR
-      Enabled: true
-      Topic: /scan
-      Size (m): 0.05
-      Color Transformer: Intensity
-      Style: Flat Squares
-      Queue Size: 10
-      Use Rainbow: true
-    - Class: rviz_default_plugins/Marker
-      Name: SAC Control
-      Enabled: true
-      Topic: /sac_control/marker
-      Queue Size: 100
+  Name: root
   Tools:
     - Class: rviz_default_plugins/Interact
-      Shortcut Key: i
+      Hide Inactive Objects: true
     - Class: rviz_default_plugins/MoveCamera
-      Shortcut Key: m
     - Class: rviz_default_plugins/Select
-      Shortcut Key: s
     - Class: rviz_default_plugins/FocusCamera
-      Shortcut Key: f
     - Class: rviz_default_plugins/Measure
-      Shortcut Key: M
+      Line color: 128; 128; 0
     - Class: rviz_default_plugins/SetInitialPose
-      Shortcut Key: p
+      Covariance x: 0.25
+      Covariance y: 0.25
+      Covariance yaw: 0.06853891909122467
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: initialpose
     - Class: rviz_default_plugins/SetGoal
-      Shortcut Key: g
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: goal_pose
   Transformation:
-    Current: rviz_default_plugins/TF
+    Current:
+      Class: rviz_default_plugins/TF
+  Value: true
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
       Distance: 5
-      Enable Stereo Rendering: false
+      Enable Stereo Rendering:
+        Stereo Eye Separation: 0.05999999865889549
+        Stereo Focal Distance: 1
+        Swap Stereo Eyes: false
+        Value: false
       Focal Point:
         X: 0
         Y: 0
         Z: 0
       Focal Shape Fixed Size: true
-      Focal Shape Size: 0.05
+      Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
-      Name: Orbit
-      Near Clip Distance: 0.01
-      Pitch: 0.785398006439209
+      Name: Current View
+      Near Clip Distance: 0.009999999776482582
+      Pitch: 0.7403979897499084
       Target Frame: base_link
-      Yaw: 0.7853981852531433
+      Value: Orbit (rviz_default_plugins)
+      Yaw: 3.160399913787842
+    Saved: ~
 Window Geometry:
   Displays:
     collapsed: false
-  Height: 720
+  Height: 1071
   Hide Left Dock: false
   Hide Right Dock: false
-  QMainWindow State: 000000ff00000000fd0000000400000000000002a30000029cfc0200000008fb0000001200530065006c0065006300740069006f006e00000001e10000009b0000005c00fffffffb0000001e005200650066006500720065006e00630065002000430061006d006500720061000000021d000000b20000000000000000fb0000000a0049006d00610067006500000001df000000160000000000000000fb0000000c00430061006d00650072006100000001df000001600000000000000000fb0000000c004c006100790065007200000001df000000190000000000000000fb000000100056006900650077007300200054006f006f006c00000001e10000009b0000005c00ffffff000000010000029c00000004fc00000000000000000000000100000100000000000000000100000001
+  QMainWindow State: 000000ff00000000fd000000020000000000000156000003d9fc0200000003fb000000100044006900730070006c006100790073010000003b000001eb000000c700fffffffb0000001200530065006c0065006300740069006f006e010000022c000000f00000005c00fffffffb0000001e0054006f006f006c002000500072006f00700065007200740069006500730100000322000000f20000005c00ffffff000000010000019b000003d9fc0200000001fb0000000a00560069006500770073010000003b000003d9000000a000ffffff0000050a000003d900000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
   Selection:
     collapsed: false
   Tool Properties:
     collapsed: false
   Views:
     collapsed: false
-  Width: 1280
-  X: 50
-  Y: 50
+  Width: 2055
+  X: 301
+  Y: 191

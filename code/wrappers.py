@@ -149,3 +149,55 @@ class F110_Wrapped(gym.Wrapper):
         self.env.seed(seed)
         np.random.seed(seed)
         print(f"F110_Wrapped seeded with {seed}")
+
+
+class LidarNormalizeWrapper(gym.ObservationWrapper):
+    """
+    LiDAR 관측값을 실행 중 평균/분산으로 정규화하여 학습 안정성을 높입니다.
+    """
+
+    def __init__(self, env, epsilon: float = 1e-6, clip: float = 5.0):
+        super().__init__(env)
+
+        if not isinstance(env.observation_space, spaces.Box):
+            raise TypeError("LidarNormalizeWrapper expects a Box observation space.")
+        if env.observation_space.shape != (1080,):
+            raise ValueError(
+                f"LidarNormalizeWrapper expects observation shape (1080,), "
+                f"but got {env.observation_space.shape}"
+            )
+
+        self.epsilon = epsilon
+        self.clip = clip
+        self.count = 0.0
+        self.mean = np.zeros(1080, dtype=np.float64)
+        self.m2 = np.ones(1080, dtype=np.float64)
+
+        self.observation_space = spaces.Box(
+            low=-clip,
+            high=clip,
+            shape=(1080,),
+            dtype=np.float32
+        )
+
+        print("[LidarNormalizeWrapper] Running mean/var normalisation enabled.")
+
+    def observation(self, observation):
+        self._update_stats(observation)
+        variance = self._variance()
+        std = np.sqrt(variance + self.epsilon)
+        normalized = (observation - self.mean) / std
+        normalized = np.clip(normalized, -self.clip, self.clip)
+        return normalized.astype(np.float32)
+
+    def _update_stats(self, observation: np.ndarray):
+        self.count += 1.0
+        delta = observation - self.mean
+        self.mean += delta / self.count
+        delta2 = observation - self.mean
+        self.m2 += delta * delta2
+
+    def _variance(self):
+        if self.count < 2:
+            return np.ones_like(self.mean)
+        return np.maximum(self.m2 / (self.count - 1.0), self.epsilon)

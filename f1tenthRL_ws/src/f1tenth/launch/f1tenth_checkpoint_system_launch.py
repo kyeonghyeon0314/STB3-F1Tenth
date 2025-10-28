@@ -30,25 +30,9 @@ def generate_launch_description():
             'map_path': PathJoinSubstitution([
                 FindPackageShare('f1tenth_gym_ros'),
                 'maps',
-                'track.yaml'
+                'underground_map.yaml'
             ])
         }.items()
-    )
-
-    # Checkpoint Path Planner Launch (체크포인트 기반 경로 계획) - 2초 지연
-    path_planner_launch = TimerAction(
-        period=2.0,
-        actions=[
-            IncludeLaunchDescription(
-                PythonLaunchDescriptionSource(
-                    PathJoinSubstitution([
-                        FindPackageShare('f1tenth_path_planner'),
-                        'launch',
-                        'checkpoint_path_planner_launch.py'
-                    ])
-                )
-            )
-        ]
     )
 
     # SAC + CNN 정책 기반 제어 노드
@@ -93,7 +77,6 @@ def generate_launch_description():
     return LaunchDescription([
         model_path_arg,
         gym_bridge_launch,
-        path_planner_launch,
         sac_control_launch,
         rviz_launch,
     ])
