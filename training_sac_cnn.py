@@ -21,9 +21,9 @@ import time
 import glob
 import wandb
 import argparse
+import math
 import numpy as np
 import torch.optim as optim
-from torch.optim.lr_scheduler import CosineAnnealingLR
 
 from datetime import datetime
 
@@ -40,20 +40,21 @@ from code.eoin_callbacks import SaveOnBestTrainingRewardCallback, LearningRateSc
 
 # 훈련 구성
 TRAIN_DIRECTORY = "./train_sac_cnn"
-TRAIN_STEPS = pow(50, 5)  # 훈련 주기당 50만 스텝
-NUM_PROCESS = 8  # 병렬 환경
+TRAIN_STEPS = 1.5 * pow(10, 5)  # 훈련 주기당 10만 스텝
+NUM_PROCESS = 32  # 병렬 환경
 MAP_PATH = "./f1tenth_racetracks/underground/underground_map"
 MAP_EXTENSION = ".png"
 TENSORBOARD_PATH = "./sac_cnn_tensorboard"
-SAVE_CHECK_FREQUENCY = int(TRAIN_STEPS / 10)
+SAVE_CHECK_FREQUENCY = 5000
 
 # Isaac Lab 포팅 시 사용한 학습률 기본값
 DEFAULT_ACTOR_CNN_LR = 1.0e-4
 DEFAULT_ACTOR_MLP_LR = 2.0e-4
-DEFAULT_CRITIC_CNN_LR = 5.0e-5
-DEFAULT_CRITIC_MLP_LR = 3.0e-4
+DEFAULT_CRITIC_CNN_LR = 1.0e-4
+DEFAULT_CRITIC_MLP_LR = 2.0e-4
 DEFAULT_ENTROPY_LR = 5.0e-4
 DEFAULT_TARGET_ENTROPY = -1.5
+DEFAULT_SPEED_CAP = 5.0
 
 
 def main(args):
@@ -75,10 +76,16 @@ def main(args):
                        num_agents=1)
 
         # 기본 RL 기능으로 래핑
-        env = F110_Wrapped(env)
+        base_env = F110_Wrapped(env)
+        if args.speed_cap is not None and args.speed_cap > 0:
+            base_env.set_training_speed_limit(args.speed_cap)
+        else:
+            base_env.set_training_speed_limit(None)
+        base_env.set_training_speed_min(0.0)
+        base_env.set_spawn_orientation_jitter(0.0)
 
         # 개선된 보상 형성 적용 (Isaac Lab 스타일)
-        env = F110_ImprovedReward(env, debug_mode=args.debug)
+        env = F110_ImprovedReward(base_env, debug_mode=args.debug)
 
         # LiDAR 관측 정규화 (Isaac Lab에서 사용하던 RunningMeanStd 대체)
         env = LidarNormalizeWrapper(env)
@@ -92,6 +99,9 @@ def main(args):
     log_dir = "tmp/"
     os.makedirs(log_dir, exist_ok=True)
     os.makedirs(TRAIN_DIRECTORY, exist_ok=True)
+
+    speed_cap_display = f"{args.speed_cap:.1f} m/s" if args.speed_cap and args.speed_cap > 0 else "disabled"
+    print(f"[Config] Training speed cap: {speed_cap_display}")
 
     # 환경 벡터화 (병렬화)
     envs = make_vec_env(wrap_env,
@@ -114,8 +124,10 @@ def main(args):
         target_entropy=args.target_entropy
     )
 
-    # 학습률 스케줄러 생성
-    schedulers = create_lr_schedulers(model, TRAIN_STEPS, scheduler_type="cosine")
+    # progress 기반 학습률 스케줄 구성
+    lr_schedule_cfg = build_lr_schedule_config(model)
+    if 'actor' in lr_schedule_cfg:
+        model.lr_schedule = lr_schedule_cfg['actor']['schedule']
 
     # 콜백 생성
     saving_callback = SaveOnBestTrainingRewardCallback(
@@ -127,8 +139,8 @@ def main(args):
     )
 
     lr_scheduler_callback = LearningRateSchedulerCallback(
-        schedulers=schedulers,
-        log_freq=1000,  # 1000 스텝마다 로깅
+        schedule_cfg=lr_schedule_cfg,
+        log_freq=1000,
         verbose=0
     )
 
@@ -353,64 +365,47 @@ def configure_learning_rates(
         print(f"[LR] Entropy optimizer lr={entropy_lr:.2e}")
 
 
-def create_lr_schedulers(
-    model: SAC,
-    total_steps: int,
-    scheduler_type: str = "cosine"
-) -> dict:
-    """
-    각 optimizer에 대해 학습률 스케줄러를 생성합니다.
+def build_lr_schedule_config(model: SAC, eta_min: float = 1e-6) -> dict:
+    """Actor/Critic/Entropy optimizers에 대한 cosine 스케줄 구성."""
 
-    Args:
-        model: SAC 모델
-        total_steps: 총 훈련 스텝 수
-        scheduler_type: 스케줄러 타입 ("cosine", "exponential", "linear")
+    def make_cosine_schedule(initial_lr: float) -> callable:
+        def schedule(progress_remaining: float) -> float:
+            progress = np.clip(progress_remaining, 0.0, 1.0)
+            return eta_min + 0.5 * (initial_lr - eta_min) * (1.0 + math.cos(math.pi * (1.0 - progress)))
+        return schedule
 
-    Returns:
-        schedulers: 스케줄러 딕셔너리 {'actor': scheduler, 'critic': scheduler, 'entropy': scheduler}
-    """
-    schedulers = {}
+    cfg: dict[str, dict] = {}
 
-    # SAC는 gradient step 기반이므로 실제 optimizer 업데이트 횟수를 계산
-    # train_freq * gradient_steps per environment step
-    # 대략적으로 total_steps / train_freq * gradient_steps
-    train_freq = getattr(model, 'train_freq', 1)
-    gradient_steps = getattr(model, 'gradient_steps', 1)
+    if hasattr(model, "actor") and model.actor is not None:
+        actor_optimizer = model.actor.optimizer
+        initial_lrs = [group['lr'] for group in actor_optimizer.param_groups]
+        base_lr = initial_lrs[-1] if initial_lrs else DEFAULT_ACTOR_MLP_LR
+        base_lr = max(base_lr, eta_min)
+        ratios = [(lr / base_lr) if base_lr > 0 else 1.0 for lr in initial_lrs] or [1.0]
+        cfg['actor'] = {
+            "schedule": make_cosine_schedule(base_lr),
+            "ratios": ratios
+        }
 
-    # SAC는 off-policy이므로 업데이트 횟수가 많음
-    # 안전하게 total_steps를 그대로 사용 (rollout 기준)
-    T_max = total_steps // 1000  # Rollout 단위로 스케줄 (대략 1000 steps per rollout)
+    if hasattr(model, "critic") and model.critic is not None:
+        critic_optimizer = model.critic.optimizer
+        initial_lrs = [group['lr'] for group in critic_optimizer.param_groups]
+        base_lr = initial_lrs[-1] if initial_lrs else DEFAULT_CRITIC_MLP_LR
+        base_lr = max(base_lr, eta_min)
+        ratios = [(lr / base_lr) if base_lr > 0 else 1.0 for lr in initial_lrs] or [1.0]
+        cfg['critic'] = {
+            "schedule": make_cosine_schedule(base_lr),
+            "ratios": ratios
+        }
 
-    if scheduler_type == "cosine":
-        # Cosine Annealing: 학습률이 cos 곡선을 따라 감소
-        # 초기 학습률 → 0 (또는 eta_min)으로 부드럽게 감소
-        if hasattr(model, 'actor') and hasattr(model.actor, 'optimizer'):
-            schedulers['actor'] = CosineAnnealingLR(
-                model.actor.optimizer,
-                T_max=T_max,
-                eta_min=1e-6  # 최소 학습률
-            )
-            print(f"[Scheduler] Actor: CosineAnnealingLR (T_max={T_max}, eta_min=1e-6)")
+    if getattr(model, "log_ent_coef_optimizer", None) is not None:
+        entropy_lr = model.log_ent_coef_optimizer.param_groups[0]['lr']
+        entropy_lr = max(entropy_lr, eta_min)
+        cfg['entropy'] = {
+            "schedule": make_cosine_schedule(entropy_lr)
+        }
 
-        if hasattr(model, 'critic') and hasattr(model.critic, 'optimizer'):
-            schedulers['critic'] = CosineAnnealingLR(
-                model.critic.optimizer,
-                T_max=T_max,
-                eta_min=1e-6
-            )
-            print(f"[Scheduler] Critic: CosineAnnealingLR (T_max={T_max}, eta_min=1e-6)")
-
-        if hasattr(model, 'log_ent_coef_optimizer') and model.log_ent_coef_optimizer is not None:
-            schedulers['entropy'] = CosineAnnealingLR(
-                model.log_ent_coef_optimizer,
-                T_max=T_max,
-                eta_min=1e-6
-            )
-            print(f"[Scheduler] Entropy: CosineAnnealingLR (T_max={T_max}, eta_min=1e-6)")
-
-    return schedulers
-
-
+    return cfg
 # Python 다중 처리에 필요
 if __name__ == "__main__":
     # 스크립트에 대한 런타임 인수 구문 분석
@@ -451,7 +446,11 @@ if __name__ == "__main__":
     parser.add_argument("--target-entropy",
                         type=float,
                         default=DEFAULT_TARGET_ENTROPY,
-                        help="SAC target entropy (default -2.0)")
+                        help=f"SAC target entropy (default {DEFAULT_TARGET_ENTROPY})")
+    parser.add_argument("--speed-cap",
+                        type=float,
+                        default=DEFAULT_SPEED_CAP,
+                        help="학습 시 최대 속도 (m/s). 0 이하로 지정하면 제한 없음.")
     args = parser.parse_args()
 
     # 주 훈련 함수 호출

@@ -63,6 +63,11 @@ class F110_Wrapped(gym.Wrapper):
         self.s_max = self.env.unwrapped.params['s_max']
         self.v_min = self.env.unwrapped.params['v_min']
         self.v_max = self.env.unwrapped.params['v_max']
+        self.training_speed_limit = None  # 학습 중 속도 상한 (m/s), None이면 제한 없음
+        self.training_speed_min = None   # 학습 중 속도 하한 (m/s), None이면 환경 기본 사용
+        self._base_orientation_jitter = np.pi / 4  # direction 미제공 시 기본 지터
+        self._aligned_orientation_jitter = 0.0     # direction 제공 시 적용할 지터 (기본 0)
+        self.last_command_speed = 0.0
 
         # 리셋 로직을 위한 자동차 크기 및 트랙 정보 저장
         self.car_length = self.env.unwrapped.params['length']
@@ -78,6 +83,7 @@ class F110_Wrapped(gym.Wrapper):
     def step(self, action):
         """Stable Baselines 호환 step. Gymnasium 반환값을 구 API 형태로 변환."""
         converted_action = self.un_normalise_actions(action)
+        self.last_command_speed = converted_action[1]
         raw_observation, reward, terminated, truncated, info = self.env.step(
             np.array([converted_action])
         )
@@ -116,7 +122,8 @@ class F110_Wrapped(gym.Wrapper):
             rand_offset = np.random.uniform(-1, 1) * self.start_radius
             spawn_xy = start_xy + rand_offset * lateral_dir
 
-            theta = np.random.uniform(-np.pi / 4, np.pi / 4) + direction
+            jitter = self._aligned_orientation_jitter if direction is not None else self._base_orientation_jitter
+            theta = np.random.uniform(-jitter, jitter) + direction
             reset_options['poses'] = np.array([[spawn_xy[0], spawn_xy[1], theta]], dtype=float)
 
         raw_observation, info = self.env.reset(seed=seed, options=reset_options)
@@ -134,7 +141,11 @@ class F110_Wrapped(gym.Wrapper):
     def un_normalise_actions(self, actions: np.ndarray) -> np.ndarray:
         """행동을 [-1, 1] 범위에서 조향/속도 범위로 변환합니다."""
         steer = convert_range(actions[0], [-1, 1], [self.s_min, self.s_max])
-        speed = convert_range(actions[1], [-1, 1], [self.v_min, self.v_max])
+        speed_min = self.v_min if self.training_speed_min is None else max(0.0, self.training_speed_min)
+        speed_max = self.v_max if self.training_speed_limit is None else min(self.v_max, self.training_speed_limit)
+        if speed_min > speed_max:
+            speed_min = speed_max
+        speed = convert_range(actions[1], [-1, 1], [speed_min, speed_max])
         return np.array([steer, speed])
 
     def update_map(self, map_name, map_extension, update_render=True):
@@ -149,6 +160,34 @@ class F110_Wrapped(gym.Wrapper):
         self.env.seed(seed)
         np.random.seed(seed)
         print(f"F110_Wrapped seeded with {seed}")
+
+    def set_training_speed_limit(self, limit: float | None):
+        """
+        학습 중 최대 속도를 설정합니다. limit=None이면 원래 차량 속도 한계를 사용합니다.
+        """
+        self.training_speed_limit = limit
+        if limit is not None:
+            self.training_speed_limit = max(0.0, limit)
+
+    def set_spawn_orientation_jitter(self, jitter_aligned: float, jitter_default: float | None = None):
+        """
+        스폰 시 방향 지터를 설정합니다.
+
+        :param jitter_aligned: direction 인자를 제공할 때 적용할 지터(라디안).
+        :param jitter_default: direction 미제공 시 사용할 기본 지터(라디안). None이면 변경하지 않습니다.
+        """
+        self._aligned_orientation_jitter = max(jitter_aligned, 0.0)
+        if jitter_default is not None:
+            self._base_orientation_jitter = max(jitter_default, 0.0)
+
+    def set_training_speed_min(self, min_speed: float | None):
+        """
+        학습 시 속도 하한을 설정합니다.
+        """
+        if min_speed is None:
+            self.training_speed_min = None
+        else:
+            self.training_speed_min = max(0.0, min_speed)
 
 
 class LidarNormalizeWrapper(gym.ObservationWrapper):

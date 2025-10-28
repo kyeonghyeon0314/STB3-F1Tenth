@@ -49,6 +49,31 @@ def generate_launch_description():
         description='RViz Marker 토픽'
     )
 
+    # Action 역정규화 범위 (학습 시 설정과 동일하게!)
+    speed_min_arg = DeclareLaunchArgument(
+        'speed_min',
+        default_value='0.0',
+        description='최소 속도 (m/s) - 학습 시 training_speed_min과 동일'
+    )
+
+    speed_max_arg = DeclareLaunchArgument(
+        'speed_max',
+        default_value='5.0',
+        description='최대 속도 (m/s) - 학습 시 --speed-cap과 동일'
+    )
+
+    steering_min_arg = DeclareLaunchArgument(
+        'steering_min',
+        default_value='-1.066',
+        description='최소 조향각 (rad)'
+    )
+
+    steering_max_arg = DeclareLaunchArgument(
+        'steering_max',
+        default_value='1.066',
+        description='최대 조향각 (rad)'
+    )
+
     sac_node = Node(
         package='f1tenth_control',
         executable='sac_cnn_controller',
@@ -62,6 +87,10 @@ def generate_launch_description():
             'drive_topic': LaunchConfiguration('drive_topic'),
             'drive_frame_id': LaunchConfiguration('drive_frame_id'),
             'marker_topic': LaunchConfiguration('marker_topic'),
+            'speed_min': LaunchConfiguration('speed_min'),
+            'speed_max': LaunchConfiguration('speed_max'),
+            'steering_min': LaunchConfiguration('steering_min'),
+            'steering_max': LaunchConfiguration('steering_max'),
         }]
     )
 
@@ -73,5 +102,9 @@ def generate_launch_description():
         drive_topic_arg,
         drive_frame_arg,
         marker_topic_arg,
+        speed_min_arg,
+        speed_max_arg,
+        steering_min_arg,
+        steering_max_arg,
         sac_node,
     ])

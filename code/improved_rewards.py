@@ -58,18 +58,32 @@ class F110_ImprovedReward(gym.Wrapper):
         self.stuck_initial_delay = 300  # 스텝 (5초)
         self.last_check_pos = np.zeros(2)
         self.steps_since_last_check = 0
+        self.command_slow_threshold = 0.1  # m/s
+        self.command_slow_limit = 180  # 스텝
+        self.command_slow_steps = 0
 
         # 에피소드 통계
         self.episode_step = 0
         self.episode_reward_sum = 0.0
         self.episode_forward_sum = 0.0
         self.episode_speed_sum = 0.0
+        self.episode_survival_sum = 0.0
         self.episode_danger_sum = 0.0
-        self.episode_alive_sum = 0.0
+        self.episode_base_sum = 0.0
+        self.command_slow_steps = 0
+
+        # 속도 정규화를 위한 최대 속도 추출 (학습 시 속도 제한 우선)
+        training_speed_limit = getattr(env, "training_speed_limit", None)
+        if training_speed_limit is not None and training_speed_limit > 0:
+            self.max_speed = training_speed_limit
+        else:
+            self.max_speed = getattr(env, "v_max", 5.0)
+        self.target_speed = max(0.2 * self.max_speed, 0.1)
 
         print(f"[ImprovedReward] Initialized with centerline: {centerline_path}")
         print(f"  - Track length: {self.track_length:.2f}m")
         print(f"  - Num waypoints: {len(self.centerline)}")
+        print(f"  - Speed normalization max: {self.max_speed:.2f} m/s (target {self.target_speed:.2f} m/s)")
 
     def _init_centerline(self):
         """
@@ -202,48 +216,48 @@ class F110_ImprovedReward(gym.Wrapper):
             raw_observation['linear_vels_y'][0]
         ])
         lidar_scan = raw_observation['scans'][0]
+        command_speed = abs(getattr(self.env, 'last_command_speed', 0.0))
+        if command_speed <= self.command_slow_threshold:
+            self.command_slow_steps += 1
+        else:
+            self.command_slow_steps = 0
 
         # --- 보상 계산 ---
 
         # 1) 트랙 진행 보상 (주요 목표)
         _, progress_delta = self._get_track_progress(pos_xy)
-        FORWARD_SCALE = 5.0  # 12.0 → 5.0으로 감소 (덜 지배적)
+        FORWARD_SCALE = 5.0  # 12.0 → 5.0 (덜 지배적)
         reward_forward = np.clip(progress_delta, 0.0, None) * FORWARD_SCALE
 
-        # 2) 속도 보상 (빠른 주행 장려)
+        # 2) 속도 보상 (전체 속도 크기 - 빠른 주행 장려)
+        actual_speed = np.linalg.norm(vel_xy)  # 방향 무관 전체 속도
         forward_direction = self._get_centerline_direction()
-        forward_speed = np.sum(vel_xy * forward_direction)
-        # 속도 보상 증가: 최대 속도(5 m/s)에서 최대 3.0 보상
-        SPEED_SCALE = 3.0  # 1.0 → 3.0으로 증가
-        reward_speed = np.clip(forward_speed / 5.0, 0.0, 1.0) * SPEED_SCALE
+        forward_speed = np.sum(vel_xy * forward_direction)  # 방향 고려 속도 (페널티용)
 
-        # 3) 저속 페널티 (정체 방지) - 완화됨
-        TARGET_SPEED = 2.0  # 1.0 → 2.0 m/s로 증가 (더 공격적인 주행 장려)
-        PENALTY_SCALE = 0.1  # 0.2 → 0.1로 감소 (덜 가혹함)
-        MIN_SPEED_RATIO = 0.1  # 0.05 → 0.1 (폭발 방지)
+        SPEED_SCALE = 3.0  # 0.6 → 3.0 (중요도 증가)
+        SPEED_NORM = 5.0   # 실제 주행 속도 기준 (50.8 아님!)
+        reward_speed = np.clip(actual_speed / SPEED_NORM, 0.0, 1.0) * SPEED_SCALE
 
-        speed_ratio = np.clip(forward_speed / TARGET_SPEED, MIN_SPEED_RATIO, 10.0)
-        reward_survival = -PENALTY_SCALE / speed_ratio + PENALTY_SCALE
-        reward_survival = np.clip(reward_survival, -1.0, 0.1)  # -2.0 → -1.0으로 완화
+        # 3) 저속 페널티/보상: 실질 전진이 거의 없을 때만 소폭 페널티를 주고, 충분히 움직이면 0으로 유지
+        TARGET_SPEED = max(self.target_speed, 1e-3)
+        MIN_PROGRESS = 0.05  # m
+        if progress_delta < MIN_PROGRESS and forward_speed < TARGET_SPEED:
+            penalty_ratio = (TARGET_SPEED - forward_speed) / TARGET_SPEED
+            reward_survival = -0.1 * penalty_ratio
+        else:
+            reward_survival = 0.0
 
-        # 4) 위험 페널티 (벽 근접성) - 완화됨
+        # 4) 위험 페널티 (연속적 지수형)
         min_distance = np.min(lidar_scan)
-
-        WARNING_DISTANCE = 0.20  # 0.25 → 0.20cm (더 가까이 가도 괜찮음)
-        PENALTY_SCALE_DANGER = 1.0  # 2.0 → 1.0으로 감소
-        EXP_STEEPNESS = 6.0  # 8.0 → 6.0으로 감소 (덜 가파른 페널티)
+        WARNING_DISTANCE = 0.25
+        PENALTY_SCALE_DANGER = 8.0
+        EXP_STEEPNESS = 10.0
 
         proximity = np.clip(WARNING_DISTANCE - min_distance, 0.0, None)
         danger_penalty = -PENALTY_SCALE_DANGER * (np.exp(EXP_STEEPNESS * proximity) - 1.0)
-        danger_penalty = np.clip(danger_penalty, -2.0, 0.0)  # -5.0 → -2.0으로 완화
+        danger_penalty = np.clip(danger_penalty, -20.0, 0.0)
 
-        ALIVE_BONUS = 0.1  # 0.05 → 0.1로 증가 (생존 장려)
-
-        # 총 보상
-        # 예상 범위: forward(0~5) + speed(0~3) + survival(-1~0.1) + danger(-2~0) + alive(0.1)
-        # 좋은 주행: 5 + 3 + 0 + (-0.5) + 0.1 = 7.6
-        # 나쁜 주행: 0 + 0 + (-1) + (-2) + 0.1 = -2.9
-        reward = reward_forward + reward_speed + reward_survival + danger_penalty + ALIVE_BONUS
+        reward = reward_forward + reward_speed + reward_survival + danger_penalty
 
         # --- 종료 조건 ---
 
@@ -252,29 +266,44 @@ class F110_ImprovedReward(gym.Wrapper):
             terminated = True
             info['terminated'] = True
             info.setdefault('episode_ended_by', 'collision')
+            collision_penalty = -10.0
+            reward += collision_penalty
             if self.debug_mode:
                 print(f"[에피소드 종료] 충돌 at step {self.episode_step}")
 
         # 2) 멈춤 감지 (stuck_check_interval 스텝마다)
+        stuck_detected = False
+        stuck_reason = None
+
+        if (self.command_slow_steps >= self.command_slow_limit) and (self.episode_step > self.stuck_initial_delay):
+            stuck_detected = True
+            stuck_reason = 'stuck_command'
+
         if self.steps_since_last_check >= self.stuck_check_interval:
             if self.episode_step > self.stuck_initial_delay:
                 movement = np.linalg.norm(pos_xy - self.last_check_pos)
-                if movement < self.stuck_threshold:
-                    terminated = True
-                    info['terminated'] = True
-                    info.setdefault('episode_ended_by', 'stuck')
-                    if self.debug_mode:
-                        print(f"[Episode End] STUCK at step {self.episode_step}")
+                if (movement < self.stuck_threshold) and (command_speed > self.command_slow_threshold):
+                    stuck_detected = True
+                    stuck_reason = stuck_reason or 'stuck_movement'
 
             self.last_check_pos = pos_xy.copy()
             self.steps_since_last_check = 0
+
+        if stuck_detected:
+            terminated = True
+            info['terminated'] = True
+            info.setdefault('episode_ended_by', stuck_reason)
+            if self.debug_mode:
+                print(f"[Episode End] {stuck_reason.upper()} at step {self.episode_step}")
+            self.command_slow_steps = 0
 
         # --- 에피소드 통계 ---
         self.episode_reward_sum += reward
         self.episode_forward_sum += reward_forward
         self.episode_speed_sum += reward_speed
+        self.episode_survival_sum += reward_survival
         self.episode_danger_sum += danger_penalty
-        self.episode_alive_sum += ALIVE_BONUS
+        self.episode_base_sum += base_reward
 
         episode_done = bool(terminated or truncated)
 
@@ -282,9 +311,19 @@ class F110_ImprovedReward(gym.Wrapper):
         if episode_done and self.debug_mode:
             avg_reward = self.episode_reward_sum / max(self.episode_step, 1)
             print(f"[Episode Summary] Steps: {self.episode_step}, Total Distance: {self.total_distance:.2f}m")
-            print(f"  Rewards: Total={self.episode_reward_sum:.2f}, Avg={avg_reward:.3f}")
+            end_reason = info.get('episode_ended_by')
+            if end_reason is None:
+                if truncated and not terminated:
+                    end_reason = 'timeout'
+                elif terminated:
+                    end_reason = 'unknown'
+                else:
+                    end_reason = 'none'
+
+            print(f"  Rewards: Total={self.episode_reward_sum:.2f}, Avg={avg_reward:.3f}, Reason: {end_reason}")
             print(f"  Forward: {self.episode_forward_sum:.2f}, Speed: {self.episode_speed_sum:.2f}, "
-                  f"Danger: {self.episode_danger_sum:.2f}, Alive: {self.episode_alive_sum:.2f}")
+                  f"Survival: {self.episode_survival_sum:.2f}, Danger: {self.episode_danger_sum:.2f}, "
+                  f"Base: {self.episode_base_sum:.2f}")
 
         # 이전 위치 업데이트
         self.previous_pos = pos_xy.copy()
@@ -295,7 +334,6 @@ class F110_ImprovedReward(gym.Wrapper):
             'speed': reward_speed,
             'survival': reward_survival,
             'danger': danger_penalty,
-            'alive': ALIVE_BONUS,
             'base': base_reward,
         })
 
@@ -309,12 +347,12 @@ class F110_ImprovedReward(gym.Wrapper):
     def reset(self, **kwargs):
         """
         환경 및 내부 상태를 리셋합니다.
-        Centerline에서 무작위 위치에 차량을 스폰합니다.
+        Centerline의 시작점에 차량을 스폰합니다.
         """
-        # Centerline에서 무작위 위치 선택
-        random_idx = np.random.randint(len(self.centerline_waypoints))
-        start_xy = self.centerline_waypoints[random_idx]
-        next_xy = self.centerline_waypoints[(random_idx + 1) % len(self.centerline_waypoints)]
+        # Centerline의 첫 점에서 시작 (일관된 학습을 위해)
+        start_idx = 0
+        start_xy = self.centerline_waypoints[start_idx]
+        next_xy = self.centerline_waypoints[start_idx + 1]
 
         # 진행 방향 계산 (다음 웨이포인트를 향하도록)
         direction = np.arctan2(next_xy[1] - start_xy[1], next_xy[0] - start_xy[0])
@@ -343,8 +381,9 @@ class F110_ImprovedReward(gym.Wrapper):
         self.episode_reward_sum = 0.0
         self.episode_forward_sum = 0.0
         self.episode_speed_sum = 0.0
+        self.episode_survival_sum = 0.0
         self.episode_danger_sum = 0.0
-        self.episode_alive_sum = 0.0
+        self.episode_base_sum = 0.0
 
         info.setdefault('reward_components', {})
 
