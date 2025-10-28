@@ -8,3 +8,7 @@ f110_gym.egg-info/
 sac_cnn_tensorboard/
 tmp/
 .nv/
+build/
+install/
+log/
+.ros/

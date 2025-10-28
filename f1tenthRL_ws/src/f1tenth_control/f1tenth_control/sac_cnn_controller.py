@@ -8,6 +8,7 @@ ROS2 노드: 학습된 SAC + CNN 정책을 사용하여 F1TENTH 차량을 제어
 - 훈련 시 사용한 범위로 조향/속도를 역정규화하여 /drive (AckermannDriveStamped) 퍼블리시
 """
 
+import math
 from pathlib import Path
 from typing import Optional
 
@@ -18,6 +19,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy
 
 from ackermann_msgs.msg import AckermannDriveStamped
 from sensor_msgs.msg import LaserScan
+from visualization_msgs.msg import Marker
 
 from stable_baselines3 import SAC
 
@@ -45,6 +47,7 @@ class SacCnnController(Node):
         self.declare_parameter('scan_topic', '/scan')
         self.declare_parameter('drive_topic', '/drive')
         self.declare_parameter('drive_frame_id', 'base_link')
+        self.declare_parameter('marker_topic', '/sac_control/marker')
         self.declare_parameter('lidar_clip', 30.0)
         self.declare_parameter('observation_dim', 1080)
         self.declare_parameter('replace_nan_with', 30.0)
@@ -61,6 +64,7 @@ class SacCnnController(Node):
         self.scan_topic = self.get_parameter('scan_topic').get_parameter_value().string_value
         self.drive_topic = self.get_parameter('drive_topic').get_parameter_value().string_value
         self.drive_frame_id = self.get_parameter('drive_frame_id').get_parameter_value().string_value
+        self.marker_topic = self.get_parameter('marker_topic').get_parameter_value().string_value
         self.lidar_clip = float(self.get_parameter('lidar_clip').value)
         self.observation_dim = int(self.get_parameter('observation_dim').value)
         self.replace_nan_with = float(self.get_parameter('replace_nan_with').value)
@@ -89,6 +93,7 @@ class SacCnnController(Node):
             qos
         )
         self.drive_pub = self.create_publisher(AckermannDriveStamped, self.drive_topic, 10)
+        self.marker_pub = self.create_publisher(Marker, self.marker_topic, 10)
 
         self.get_logger().info(f'/scan → {self.scan_topic}, /drive → {self.drive_topic}')
         self.get_logger().info(f'조향 범위: [{self.steering_min}, {self.steering_max}], 속도 범위: [{self.speed_min}, {self.speed_max}]')
@@ -137,6 +142,56 @@ class SacCnnController(Node):
         drive_msg.drive.speed = speed
 
         self.drive_pub.publish(drive_msg)
+        self.publish_marker(steer, speed, drive_msg.header.stamp)
+
+    def publish_marker(self, steer: float, speed: float, stamp) -> None:
+        """조향/속도 값을 RViz에서 확인할 수 있도록 Marker를 출력."""
+        if self.marker_pub is None:
+            return
+
+        marker = Marker()
+        marker.header.frame_id = self.drive_frame_id
+        marker.header.stamp = stamp
+        marker.ns = 'sac_cnn_control'
+        marker.id = 0
+        marker.type = Marker.ARROW
+        marker.action = Marker.ADD
+        marker.pose.position.x = 0.0
+        marker.pose.position.y = 0.0
+        marker.pose.position.z = 0.1
+
+        yaw = steer
+        marker.pose.orientation.z = math.sin(yaw / 2.0)
+        marker.pose.orientation.w = math.cos(yaw / 2.0)
+
+        marker.scale.x = max(abs(speed), 0.1)
+        marker.scale.y = 0.05
+        marker.scale.z = 0.05
+        marker.color.r = 0.1
+        marker.color.g = 0.8
+        marker.color.b = 0.2
+        marker.color.a = 0.9
+
+        self.marker_pub.publish(marker)
+
+        text_marker = Marker()
+        text_marker.header.frame_id = self.drive_frame_id
+        text_marker.header.stamp = stamp
+        text_marker.ns = 'sac_cnn_control'
+        text_marker.id = 1
+        text_marker.type = Marker.TEXT_VIEW_FACING
+        text_marker.action = Marker.ADD
+        text_marker.pose.position.x = 0.0
+        text_marker.pose.position.y = 0.0
+        text_marker.pose.position.z = 0.6
+        text_marker.scale.z = 0.25
+        text_marker.color.r = 0.9
+        text_marker.color.g = 0.9
+        text_marker.color.b = 0.9
+        text_marker.color.a = 1.0
+        text_marker.text = f"speed: {speed:.2f} m/s\nsteer: {steer:.3f} rad"
+
+        self.marker_pub.publish(text_marker)
 
 
 def main(args=None) -> None:

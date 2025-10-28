@@ -1,0 +1,100 @@
+Panels:
+  - Class: rviz_common/Displays
+    Help Height: 78
+    Name: Displays
+    Property Tree Widget:
+      Expanded: ~
+      Splitter Ratio: 0.5
+    Tree Height: 555
+  - Class: rviz_common/Selection
+    Name: Selection
+  - Class: rviz_common/Tool Properties
+    Name: Tool Properties
+    Expanded:
+      - /2D Goal Pose1
+    Splitter Ratio: 0.5886790156364441
+  - Class: rviz_common/Views
+    Expanded:
+      - /Current View1
+    Name: Views
+    Splitter Ratio: 0.5
+Visualization Manager:
+  Class: ""
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: base_link
+    Frame Rate: 30
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Cell Size: 1
+      Plane Cell Count: 20
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: true
+    - Class: rviz_default_plugins/LaserScan
+      Name: LiDAR
+      Enabled: true
+      Topic: /scan
+      Size (m): 0.05
+      Color Transformer: Intensity
+      Style: Flat Squares
+      Queue Size: 10
+      Use Rainbow: true
+    - Class: rviz_default_plugins/Marker
+      Name: SAC Control
+      Enabled: true
+      Topic: /sac_control/marker
+      Queue Size: 100
+  Tools:
+    - Class: rviz_default_plugins/Interact
+      Shortcut Key: i
+    - Class: rviz_default_plugins/MoveCamera
+      Shortcut Key: m
+    - Class: rviz_default_plugins/Select
+      Shortcut Key: s
+    - Class: rviz_default_plugins/FocusCamera
+      Shortcut Key: f
+    - Class: rviz_default_plugins/Measure
+      Shortcut Key: M
+    - Class: rviz_default_plugins/SetInitialPose
+      Shortcut Key: p
+    - Class: rviz_default_plugins/SetGoal
+      Shortcut Key: g
+  Transformation:
+    Current: rviz_default_plugins/TF
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 5
+      Enable Stereo Rendering: false
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0
+      Focal Shape Fixed Size: true
+      Focal Shape Size: 0.05
+      Invert Z Axis: false
+      Name: Orbit
+      Near Clip Distance: 0.01
+      Pitch: 0.785398006439209
+      Target Frame: base_link
+      Yaw: 0.7853981852531433
+Window Geometry:
+  Displays:
+    collapsed: false
+  Height: 720
+  Hide Left Dock: false
+  Hide Right Dock: false
+  QMainWindow State: 000000ff00000000fd0000000400000000000002a30000029cfc0200000008fb0000001200530065006c0065006300740069006f006e00000001e10000009b0000005c00fffffffb0000001e005200650066006500720065006e00630065002000430061006d006500720061000000021d000000b20000000000000000fb0000000a0049006d00610067006500000001df000000160000000000000000fb0000000c00430061006d00650072006100000001df000001600000000000000000fb0000000c004c006100790065007200000001df000000190000000000000000fb000000100056006900650077007300200054006f006f006c00000001e10000009b0000005c00ffffff000000010000029c00000004fc00000000000000000000000100000100000000000000000100000001
+  Selection:
+    collapsed: false
+  Tool Properties:
+    collapsed: false
+  Views:
+    collapsed: false
+  Width: 1280
+  X: 50
+  Y: 50

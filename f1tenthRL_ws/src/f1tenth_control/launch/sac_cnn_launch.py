@@ -9,7 +9,7 @@ from launch_ros.actions import Node
 def generate_launch_description():
     model_path_arg = DeclareLaunchArgument(
         'model_path',
-        default_value='train_sac_cnn/sac-cnn-latest.zip',
+        default_value='models/sac-cnn-latest.zip',
         description='Stable Baselines 3 SAC 모델 (.zip) 경로'
     )
 
@@ -43,6 +43,12 @@ def generate_launch_description():
         description='드라이브 메시지 frame_id'
     )
 
+    marker_topic_arg = DeclareLaunchArgument(
+        'marker_topic',
+        default_value='/sac_control/marker',
+        description='RViz Marker 토픽'
+    )
+
     sac_node = Node(
         package='f1tenth_control',
         executable='sac_cnn_controller',
@@ -55,6 +61,7 @@ def generate_launch_description():
             'scan_topic': LaunchConfiguration('scan_topic'),
             'drive_topic': LaunchConfiguration('drive_topic'),
             'drive_frame_id': LaunchConfiguration('drive_frame_id'),
+            'marker_topic': LaunchConfiguration('marker_topic'),
         }]
     )
 
@@ -65,5 +72,6 @@ def generate_launch_description():
         scan_topic_arg,
         drive_topic_arg,
         drive_frame_arg,
+        marker_topic_arg,
         sac_node,
     ])
