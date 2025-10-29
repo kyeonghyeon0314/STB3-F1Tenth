@@ -133,7 +133,8 @@ class GymBridge(Node):
             'f110_gym:f110-v0',
             map=self.get_parameter('map_path').value,
             map_ext=self.get_parameter('map_img_ext').value,
-            num_agents=self.num_agents)
+            num_agents=self.num_agents,
+            time_step=0.025)  # 40Hz - 학습 환경과 동일
 
         if self.num_agents == 2:
             initial_poses = np.array([[sx, sy, stheta], [sx1, sy1, stheta1]], dtype=float)
@@ -144,9 +145,9 @@ class GymBridge(Node):
 
         # TF 브로드캐스터
         self.br = TransformBroadcaster(self)
-        # 타이머: 시뮬레이션 스텝(100Hz) / 퍼블리시 루프(250Hz)
-        self.drive_timer = self.create_timer(0.01, self.drive_timer_callback)
-        self.timer = self.create_timer(0.004, self.timer_callback)
+        # 타이머: 시뮬레이션 스텝과 퍼블리시 모두 40Hz (학습 환경과 동일)
+        self.drive_timer = self.create_timer(0.025, self.drive_timer_callback)
+        self.timer = self.create_timer(0.025, self.timer_callback)
         
         # 토픽 이름 설정
         ego_scan_topic = self.get_parameter('ego_scan_topic').value
@@ -287,7 +288,7 @@ class GymBridge(Node):
         """
         물리 시뮬레이션 스텝 실행 (주기 타이머)
         - 목적: 현재 명령(ego/opp)을 바탕으로 env.step을 1스텝 진행
-        - 주기: 0.01s (100 Hz)
+        - 주기: 0.025s (40 Hz) - 학습 환경과 동일
         - (ego_drive_published 플래그) 최초 명령 수신 전에는 스텝을 진행 X
         - 충돌/종료 시 자동 리셋을 방지하기 위해 step 중단
         """
@@ -311,7 +312,7 @@ class GymBridge(Node):
         """
         LiDAR/Odom/TF 퍼블리싱 루프 (주기 타이머)
         - 목적: 현재 시뮬레이션 상태를 ROS 토픽/TF로 퍼블리시합니다.
-        - 주기: 0.004s (≈250 Hz)
+        - 주기: 0.025s (40 Hz) - 실제 LiDAR 센서 주파수와 동일
         - 퍼블리시:
           * LaserScan: ego(+opp)
           * Odometry: ego(+opp), 상호 추정 odom(ego_opp/opp_ego)

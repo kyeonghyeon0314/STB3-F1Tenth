@@ -15,7 +15,7 @@ def generate_launch_description():
 
     device_arg = DeclareLaunchArgument(
         'device',
-        default_value='cpu',
+        default_value='cuda',
         description='모델 추론 장치(cpu/cuda)'
     )
 
@@ -47,6 +47,12 @@ def generate_launch_description():
         'marker_topic',
         default_value='/sac_control/marker',
         description='RViz Marker 토픽'
+    )
+
+    filtered_scan_topic_arg = DeclareLaunchArgument(
+        'filtered_scan_topic',
+        default_value='/filtered_scan',
+        description='CNN 특징 벡터 퍼블리시 토픽 (64-dim)'
     )
 
     # Action 역정규화 범위 (학습 시 설정과 동일하게!)
@@ -87,6 +93,7 @@ def generate_launch_description():
             'drive_topic': LaunchConfiguration('drive_topic'),
             'drive_frame_id': LaunchConfiguration('drive_frame_id'),
             'marker_topic': LaunchConfiguration('marker_topic'),
+            'filtered_scan_topic': LaunchConfiguration('filtered_scan_topic'),
             'speed_min': LaunchConfiguration('speed_min'),
             'speed_max': LaunchConfiguration('speed_max'),
             'steering_min': LaunchConfiguration('steering_min'),
@@ -102,6 +109,7 @@ def generate_launch_description():
         drive_topic_arg,
         drive_frame_arg,
         marker_topic_arg,
+        filtered_scan_topic_arg,
         speed_min_arg,
         speed_max_arg,
         steering_min_arg,

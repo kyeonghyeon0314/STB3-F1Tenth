@@ -234,7 +234,7 @@ class F110_ImprovedReward(gym.Wrapper):
         forward_direction = self._get_centerline_direction()
         forward_speed = np.sum(vel_xy * forward_direction)  # 방향 고려 속도 (페널티용)
 
-        SPEED_SCALE = 3.0  # 0.6 → 3.0 (중요도 증가)
+        SPEED_SCALE = 0.3  # 0.6 → 3.0 (중요도 증가)
         SPEED_NORM = 5.0   # 실제 주행 속도 기준 (50.8 아님!)
         reward_speed = np.clip(actual_speed / SPEED_NORM, 0.0, 1.0) * SPEED_SCALE
 

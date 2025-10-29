@@ -22,6 +22,7 @@ from sensor_msgs.msg import LaserScan
 from visualization_msgs.msg import Marker
 
 from stable_baselines3 import SAC
+import torch
 
 
 def convert_range(value: float, input_range, output_range) -> float:
@@ -48,6 +49,7 @@ class SacCnnController(Node):
         self.declare_parameter('drive_topic', '/drive')
         self.declare_parameter('drive_frame_id', 'ego_racecar/base_link')
         self.declare_parameter('marker_topic', '/sac_control/marker')
+        self.declare_parameter('filtered_scan_topic', '/filtered_scan')
         self.declare_parameter('lidar_clip', 30.0)
         self.declare_parameter('observation_dim', 1080)
         self.declare_parameter('replace_nan_with', 30.0)
@@ -73,6 +75,7 @@ class SacCnnController(Node):
         self.drive_topic = self.get_parameter('drive_topic').get_parameter_value().string_value
         self.drive_frame_id = self.get_parameter('drive_frame_id').get_parameter_value().string_value
         self.marker_topic = self.get_parameter('marker_topic').get_parameter_value().string_value
+        self.filtered_scan_topic = self.get_parameter('filtered_scan_topic').get_parameter_value().string_value
         self.lidar_clip = float(self.get_parameter('lidar_clip').value)
         self.observation_dim = int(self.get_parameter('observation_dim').value)
         self.replace_nan_with = float(self.get_parameter('replace_nan_with').value)
@@ -173,8 +176,10 @@ class SacCnnController(Node):
         )
         self.drive_pub = self.create_publisher(AckermannDriveStamped, self.drive_topic, 10)
         self.marker_pub = self.create_publisher(Marker, self.marker_topic, 10)
+        self.filtered_scan_pub = self.create_publisher(LaserScan, self.filtered_scan_topic, 10)
 
         self.get_logger().info(f'/scan → {self.scan_topic}, /drive → {self.drive_topic}')
+        self.get_logger().info(f'CNN features → {self.filtered_scan_topic}')
         self.get_logger().info(f'조향 범위: [{self.steering_min:.3f}, {self.steering_max:.3f}] rad, '
                               f'속도 범위: [{self.speed_min:.1f}, {self.speed_max:.1f}] m/s')
         if self.normalize_lidar:
@@ -229,6 +234,13 @@ class SacCnnController(Node):
             return
 
         try:
+            # CNN 특징 추출 + 원본 LiDAR 전달
+            cnn_features = self.extract_cnn_features(observation)
+            if cnn_features is not None:
+                # 원본 LiDAR도 함께 전달
+                self.publish_filtered_scan(cnn_features, msg.ranges)
+
+            # 행동 예측
             action, _ = self.model.predict(observation, deterministic=self.deterministic)
         except Exception as exc:  # pylint: disable=broad-except
             self.get_logger().error(f'SAC 예측 실패: {exc}')
@@ -245,6 +257,147 @@ class SacCnnController(Node):
 
         self.drive_pub.publish(drive_msg)
         self.publish_marker(steer, speed, drive_msg.header.stamp)
+
+    def extract_cnn_features(self, observation: np.ndarray) -> Optional[np.ndarray]:
+        """
+        LiDAR 관측값에서 CNN 거리 다운샘플러 출력을 추출합니다.
+
+        새 모델: 1080 → CNN → 128개 다운샘플링된 거리값
+        구 모델: 1080 → CNN → 64개 추상 특징
+
+        Args:
+            observation: 전처리된 LiDAR 스캔 (1080,)
+
+        Returns:
+            128차원 거리값 또는 64차원 추상 특징, 실패 시 None
+        """
+        try:
+            # Policy 접근
+            if not hasattr(self.model, 'policy') or self.model.policy is None:
+                self.get_logger().warn('Model policy not found', throttle_duration_sec=10.0)
+                return None
+
+            policy = self.model.policy
+
+            # features_extractor 찾기 (SAC는 actor 안에 있음)
+            features_extractor = None
+
+            # 1. Actor의 features_extractor 확인 (SAC의 경우)
+            if hasattr(policy, 'actor') and policy.actor is not None:
+                if hasattr(policy.actor, 'features_extractor') and policy.actor.features_extractor is not None:
+                    features_extractor = policy.actor.features_extractor
+                    self.get_logger().info('Using actor.features_extractor', once=True)
+
+            # 2. Policy의 features_extractor 확인 (fallback)
+            if features_extractor is None:
+                if hasattr(policy, 'features_extractor') and policy.features_extractor is not None:
+                    features_extractor = policy.features_extractor
+                    self.get_logger().info('Using policy.features_extractor', once=True)
+
+            if features_extractor is None:
+                self.get_logger().warn('Features extractor not available in actor or policy', throttle_duration_sec=10.0)
+                return None
+
+            # Observation을 torch tensor로 변환
+            obs_tensor = torch.as_tensor(observation, dtype=torch.float32).unsqueeze(0)
+
+            # Device를 torch.device로 변환
+            device = torch.device(self.device)
+            obs_tensor = obs_tensor.to(device)
+
+            # Features extractor를 evaluation 모드로 설정
+            features_extractor.eval()
+
+            # Features 추출 (자동으로 거리 다운샘플러 또는 추상 특징 반환)
+            with torch.no_grad():
+                features = features_extractor(obs_tensor)  # (batch, 128) 또는 (batch, 64)
+                features_np = features.cpu().numpy().flatten()
+
+                # 모델 타입 로깅 (한 번만)
+                if features_np.shape[0] == 128:
+                    self.get_logger().info('거리 다운샘플러 모델 (128개 거리값)', once=True)
+                else:
+                    self.get_logger().info(f'추상 특징 모델 ({features_np.shape[0]}개 특징)', once=True)
+
+                return features_np
+
+        except Exception as exc:
+            self.get_logger().warn(f'CNN 특징 추출 실패: {exc}', throttle_duration_sec=5.0)
+            return None
+
+    def publish_filtered_scan(self, cnn_features: np.ndarray, original_ranges: list) -> None:
+        """
+        CNN 출력을 LaserScan으로 발행합니다.
+
+        두 가지 모드:
+        1. 거리 다운샘플러 모드 (128개): CNN 출력을 직접 거리로 사용
+        2. 추상 특징 모드 (기타): 원본 다운샘플링 + CNN intensity
+
+        Args:
+            cnn_features: CNN 출력 (128개 거리값 또는 다른 크기 특징)
+            original_ranges: 원본 LiDAR 거리값 (1080,)
+        """
+        if self.filtered_scan_pub is None:
+            return
+
+        # LaserScan 메시지 생성
+        msg = LaserScan()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = 'ego_racecar/laser'
+
+        num_features = len(cnn_features)
+        fov = 4.7  # 270도
+        msg.angle_min = -fov / 2.0
+        msg.angle_max = fov / 2.0
+        msg.angle_increment = fov / (num_features - 1) if num_features > 1 else 0.0
+        msg.time_increment = 0.0
+        msg.scan_time = 0.025  # 40Hz
+        msg.range_min = 0.0
+        msg.range_max = 30.0
+
+        if num_features == 128:
+            # ===== 거리 다운샘플러 모드 =====
+            # CNN 출력이 이미 거리값! (1080 → 128 학습된 다운샘플링)
+            msg.ranges = cnn_features.tolist()
+
+            # Intensity는 원본 LiDAR 다운샘플링 (비교용)
+            original_ranges_arr = np.array(original_ranges)
+            downsample_factor = len(original_ranges_arr) // num_features  # 1080 // 128 ≈ 8.4
+
+            original_downsampled = []
+            for i in range(num_features):
+                start_idx = int(i * downsample_factor)
+                end_idx = int((i + 1) * downsample_factor)
+                range_segment = original_ranges_arr[start_idx:end_idx]
+                original_downsampled.append(float(np.min(range_segment)))
+
+            msg.intensities = original_downsampled
+
+        else:
+            # ===== 추상 특징 모드 (기존 방식) =====
+            # 원본 LiDAR 다운샘플링
+            original_ranges_arr = np.array(original_ranges)
+            downsample_factor = len(original_ranges_arr) // num_features
+
+            downsampled_ranges = []
+            for i in range(num_features):
+                start_idx = i * downsample_factor
+                end_idx = start_idx + downsample_factor
+                range_segment = original_ranges_arr[start_idx:end_idx]
+                downsampled_ranges.append(float(np.min(range_segment)))
+
+            msg.ranges = downsampled_ranges
+
+            # CNN 활성화를 intensity로
+            cnn_intensities = np.maximum(cnn_features, 0.0)
+            if cnn_intensities.max() > 0.01:
+                normalized_intensities = (cnn_intensities / cnn_intensities.max()) * 1000.0
+            else:
+                normalized_intensities = np.zeros_like(cnn_intensities)
+
+            msg.intensities = normalized_intensities.tolist()
+
+        self.filtered_scan_pub.publish(msg)
 
     def publish_marker(self, steer: float, speed: float, stamp) -> None:
         """조향/속도 값을 RViz에서 확인할 수 있도록 Marker를 출력."""

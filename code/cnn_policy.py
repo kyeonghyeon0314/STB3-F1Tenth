@@ -42,37 +42,67 @@ class LidarFeatureExtractor(BaseFeaturesExtractor):
                 f"but got {observation_space.shape}"
             )
 
+        # 기본 CNN: 1080 → 135 공간 압축
         self.cnn = nn.Sequential(
-            nn.Conv1d(1, 32, kernel_size=5, stride=2, padding=2),
+            nn.Conv1d(1, 32, kernel_size=5, stride=2, padding=2),  # 1080 → 540
             nn.ReLU(),
-            nn.Conv1d(32, 64, kernel_size=3, stride=2, padding=1),
+            nn.Conv1d(32, 64, kernel_size=3, stride=2, padding=1), # 540 → 270
             nn.ReLU(),
-            nn.Conv1d(64, 64, kernel_size=3, stride=2, padding=1),
+            nn.Conv1d(64, 64, kernel_size=3, stride=2, padding=1), # 270 → 135
             nn.ReLU(),
         )
-        
-        # 출력은 64개의 특징
-        print(f"[LidarFeatureExtractor] Initialized: 1080 -> CNN -> {features_dim} features")
+
+        # features_dim에 따라 모드 결정
+        self.use_distance_downsampler = (features_dim == 128)
+
+        if self.use_distance_downsampler:
+            # 거리 다운샘플러 모드: 64채널 → 1채널(거리)
+            self.distance_projection = nn.Conv1d(64, 1, kernel_size=1)  # 64채널을 거리로 변환
+            self.output_size = 128
+            print(f"[LidarFeatureExtractor] 거리 다운샘플러 모드: 1080 → CNN → (64,135) → 거리변환 → (135) → {features_dim} 거리값")
+        else:
+            # 기존 GlobalAvgPool 모드
+            self.distance_projection = None
+            self.output_size = features_dim
+            print(f"[LidarFeatureExtractor] 추상 특징 모드: 1080 → CNN → GlobalAvgPool → {features_dim} 특징")
 
     def forward(self, observations: torch.Tensor) -> torch.Tensor:
         """
         특징 추출기의 순전파.
-        
+
         :param observations: (batch_size, 1080) 모양의 LiDAR 스캔
-        :return: (batch_size, 64) 모양의 추출된 특징
+        :return: (batch_size, features_dim) 모양의 추출된 특징
         """
         # 채널 차원 추가: (batch_size, 1080) -> (batch_size, 1, 1080)
         cnn_input = observations.unsqueeze(1)
-        
+
         # 컨볼루션 레이어를 통과
         features = self.cnn(cnn_input) # -> (batch_size, 64, 135)
-        
-        # 전역 평균 풀링 적용
-        # 공간 차원(135)에 대해 평균 계산
-        pooled_features = torch.nn.functional.adaptive_avg_pool1d(features, 1) # -> (batch_size, 64, 1)
-        
-        # 마지막 차원 제거
-        return pooled_features.squeeze(-1) # -> (batch_size, 64)
+
+        if self.use_distance_downsampler:
+            # ===== 거리 다운샘플러 모드 =====
+            # 64개 채널을 1개 채널(거리)로 투영
+            # (batch, 64, 135) -> (batch, 1, 135)
+            distance_map = self.distance_projection(features)
+
+            # (batch, 1, 135) -> (batch, 135)
+            distance_map = distance_map.squeeze(1)
+
+            # 135개 위치 -> 128개 위치로 다운샘플링
+            # (batch, 135) -> (batch, 1, 135) -> adaptive_pool -> (batch, 1, 128) -> (batch, 128)
+            downsampled_distances = torch.nn.functional.adaptive_avg_pool1d(
+                distance_map.unsqueeze(1), self.output_size
+            ).squeeze(1)
+
+            return downsampled_distances  # -> (batch_size, 128) 거리값
+        else:
+            # ===== 기존 추상 특징 모드 =====
+            # 전역 평균 풀링 적용
+            # 공간 차원(135)에 대해 평균 계산
+            pooled_features = torch.nn.functional.adaptive_avg_pool1d(features, 1) # -> (batch_size, 64, 1)
+
+            # 마지막 차원 제거
+            return pooled_features.squeeze(-1) # -> (batch_size, 64)
 
 
 # SAC 정책 기본 클래스 가져오기
@@ -128,14 +158,14 @@ class CNNSACPolicy(SACPolicy):
             lr_schedule,
             net_arch=net_arch,
             features_extractor_class=LidarFeatureExtractor,
-            features_extractor_kwargs=dict(features_dim=64),
+            features_extractor_kwargs=dict(features_dim=128),  # 거리 다운샘플러: 1080 → 128
             **kwargs
         )
 
-        print("[CNNSACPolicy] Initialized SAC policy with CNN feature extractor")
-        print(f"  - Feature extractor: LiDAR (1080) -> CNN -> 64 features")
-        print(f"  - Actor network: {net_arch['pi']}")
-        print(f"  - Critic network: {net_arch['qf']}")
+        print("[CNNSACPolicy] Initialized SAC policy with CNN distance downsampler")
+        print(f"  - Feature extractor: LiDAR (1080) -> CNN -> 128 downsampled distances")
+        print(f"  - Actor network (128 입력): {net_arch['pi']}")
+        print(f"  - Critic network (128+2 입력): {net_arch['qf']}")
 
 
 # 정책 생성을 위한 편의 함수

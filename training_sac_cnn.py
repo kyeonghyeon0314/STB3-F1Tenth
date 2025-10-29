@@ -69,11 +69,12 @@ def main(args):
 
     # 환경 준비
     def wrap_env():
-        # F110 gym 시작
+        # F110 gym 시작 (time_step=0.025s → 40Hz, 실제 LiDAR 주파수와 동일)
         env = gym.make("f110-v0",
                        map=MAP_PATH,
                        map_ext=MAP_EXTENSION,
-                       num_agents=1)
+                       num_agents=1,
+                       time_step=0.025)
 
         # 기본 RL 기능으로 래핑
         base_env = F110_Wrapped(env)
